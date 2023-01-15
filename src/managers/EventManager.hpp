@@ -1,6 +1,6 @@
 #pragma once
-#include <deque>
 #include <fstream>
+#include <vector>
 #include <mutex>
 
 #include "../defines.hpp"
@@ -24,12 +24,7 @@ class CEventManager {
     std::thread m_tThread;
 
   private:
-    void                                         flushEvents();
-
-    std::mutex                                   eventQueueMutex;
-    std::deque<SHyprIPCEvent>                    m_dQueuedEvents;
-
-    std::deque<std::pair<int, wl_event_source*>> m_dAcceptedSocketFDs;
+    std::vector<std::pair<int, wl_event_source*>> m_dAcceptedSocketFDs;
 };
 
 inline std::unique_ptr<CEventManager> g_pEventManager;

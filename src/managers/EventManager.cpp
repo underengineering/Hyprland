@@ -20,7 +20,7 @@ CEventManager::CEventManager() {}
 int fdHandleWrite(int fd, uint32_t mask, void* data) {
     if (mask & WL_EVENT_ERROR || mask & WL_EVENT_HANGUP) {
         // remove, hanged up
-        const auto ACCEPTEDFDS = (std::deque<std::pair<int, wl_event_source*>>*)data;
+        const auto ACCEPTEDFDS = (std::vector<std::pair<int, wl_event_source*>>*)data;
         for (auto it = ACCEPTEDFDS->begin(); it != ACCEPTEDFDS->end();) {
             if (it->first == fd) {
                 wl_event_source_remove(it->second); // remove this fd listener
@@ -47,7 +47,11 @@ void CEventManager::startThread() {
         std::string socketPath    = "/tmp/hypr/" + g_pCompositor->m_szInstanceSignature + "/.socket2.sock";
         strcpy(SERVERADDRESS.sun_path, socketPath.c_str());
 
-        bind(SOCKET, (sockaddr*)&SERVERADDRESS, SUN_LEN(&SERVERADDRESS));
+        if (bind(SOCKET, (sockaddr*)&SERVERADDRESS, SUN_LEN(&SERVERADDRESS)) < 0) {
+            Debug::log(ERR, "Failed to bind Socket 2");
+            close(SOCKET);
+            return;
+        }
 
         // 10 max queued.
         listen(SOCKET, 10);
@@ -80,36 +84,17 @@ void CEventManager::startThread() {
     m_tThread.detach();
 }
 
-void CEventManager::flushEvents() {
-    eventQueueMutex.lock();
-
-    for (auto& ev : m_dQueuedEvents) {
-        std::string eventString = (ev.event + ">>" + ev.data).substr(0, 1022) + "\n";
-        for (auto& fd : m_dAcceptedSocketFDs) {
-            write(fd.first, eventString.c_str(), eventString.length());
-        }
-    }
-
-    m_dQueuedEvents.clear();
-
-    eventQueueMutex.unlock();
-}
-
 void CEventManager::postEvent(const SHyprIPCEvent event, bool force) {
-
     if ((m_bIgnoreEvents && !force) || g_pCompositor->m_bIsShuttingDown) {
         Debug::log(WARN, "Suppressed (ignoreevents true / shutting down) event of type %s, content: %s", event.event.c_str(), event.data.c_str());
         return;
     }
 
-    std::thread(
-        [&](const SHyprIPCEvent ev) {
-            eventQueueMutex.lock();
-            m_dQueuedEvents.push_back(ev);
-            eventQueueMutex.unlock();
-
-            flushEvents();
-        },
-        event)
-        .detach();
+    std::string eventString = (event.event + ">>" + event.data).substr(0, 1022) + "\n";
+    for (auto& fd : m_dAcceptedSocketFDs) {
+        ssize_t written = write(fd.first, eventString.c_str(), eventString.length());
+        if (written != (ssize_t)eventString.length()) {
+            Debug::log(WARN, "Written %ll bytes out of %ll expected to Socket2 fd %d", written, eventString.length(), fd.first);
+        }
+    }
 }
