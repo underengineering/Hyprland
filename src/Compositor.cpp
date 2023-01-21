@@ -306,8 +306,6 @@ void CCompositor::startCompositor() {
     // Init all the managers BEFORE we start with the wayland server so that ALL of the stuff is initialized
     // properly and we dont get any bad mem reads.
     //
-    Debug::log(LOG, "Creating the CHyprError!");
-    g_pHyprError = std::make_unique<CHyprError>();
 
     Debug::log(LOG, "Creating the KeybindManager!");
     g_pKeybindManager = std::make_unique<CKeybindManager>();
@@ -320,6 +318,9 @@ void CCompositor::startCompositor() {
 
     Debug::log(LOG, "Creating the ConfigManager!");
     g_pConfigManager = std::make_unique<CConfigManager>();
+
+    Debug::log(LOG, "Creating the CHyprError!");
+    g_pHyprError = std::make_unique<CHyprError>();
 
     Debug::log(LOG, "Creating the ThreadManager!");
     g_pThreadManager = std::make_unique<CThreadManager>();
@@ -357,16 +358,28 @@ void CCompositor::startCompositor() {
 
     // get socket, avoid using 0
     for (int candidate = 1; candidate <= 32; candidate++) {
-        if (wl_display_add_socket(m_sWLDisplay, ("wayland-" + std::to_string(candidate)).c_str()) >= 0) {
-            m_szWLDisplaySocket = "wayland-" + std::to_string(candidate);
+        const auto CANDIDATESTR = ("wayland-" + std::to_string(candidate));
+        const auto RETVAL       = wl_display_add_socket(m_sWLDisplay, CANDIDATESTR.c_str());
+        if (RETVAL >= 0) {
+            m_szWLDisplaySocket = CANDIDATESTR;
+            Debug::log(LOG, "wl_display_add_socket for %s succeeded with %i", CANDIDATESTR.c_str(), RETVAL);
             break;
+        } else {
+            Debug::log(WARN, "wl_display_add_socket for %s returned %i: skipping candidate %i", CANDIDATESTR.c_str(), RETVAL, candidate);
         }
+    }
+
+    if (m_szWLDisplaySocket.empty()) {
+        Debug::log(WARN, "All candidates failed, trying wl_display_add_socket_auto");
+        const auto SOCKETSTR = wl_display_add_socket_auto(m_sWLDisplay);
+        if (SOCKETSTR)
+            m_szWLDisplaySocket = SOCKETSTR;
     }
 
     if (m_szWLDisplaySocket.empty()) {
         Debug::log(CRIT, "m_szWLDisplaySocket NULL!");
         wlr_backend_destroy(m_sWLRBackend);
-        throw std::runtime_error("m_szWLDisplaySocket was null! (wl_display_add_socket_auto failed)");
+        throw std::runtime_error("m_szWLDisplaySocket was null! (wl_display_add_socket and wl_display_add_socket_auto failed)");
     }
 
     setenv("WAYLAND_DISPLAY", m_szWLDisplaySocket.c_str(), 1);
@@ -795,8 +808,14 @@ void CCompositor::focusWindow(CWindow* pWindow, wlr_surface* pSurface) {
     if (pWindow->m_bPinned)
         pWindow->m_iWorkspaceID = m_pLastMonitor->activeWorkspace;
 
-    if (!isWorkspaceVisible(pWindow->m_iWorkspaceID))
+    if (!isWorkspaceVisible(pWindow->m_iWorkspaceID)) {
+        // This is to fix incorrect feedback on the focus history.
+        const auto PWORKSPACE            = getWorkspaceByID(pWindow->m_iWorkspaceID);
+        PWORKSPACE->m_pLastFocusedWindow = pWindow;
         g_pKeybindManager->changeworkspace("[internal]" + std::to_string(pWindow->m_iWorkspaceID));
+        // changeworkspace already calls focusWindow
+        return;
+    }
 
     const auto PLASTWINDOW = m_pLastWindow;
     m_pLastWindow          = pWindow;
@@ -853,6 +872,14 @@ void CCompositor::focusWindow(CWindow* pWindow, wlr_surface* pSurface) {
     }
 
     g_pInputManager->recheckIdleInhibitorStatus();
+
+    // move to front of the window history
+    const auto HISTORYPIVOT = std::find_if(m_vWindowFocusHistory.begin(), m_vWindowFocusHistory.end(), [&](const auto& other) { return other == pWindow; });
+    if (HISTORYPIVOT == m_vWindowFocusHistory.end()) {
+        Debug::log(ERR, "BUG THIS: Window %x has no pivot in history", pWindow);
+    } else {
+        std::rotate(m_vWindowFocusHistory.begin(), HISTORYPIVOT, HISTORYPIVOT + 1);
+    }
 }
 
 void CCompositor::focusSurface(wlr_surface* pSurface, CWindow* pWindowOwner) {
@@ -1055,6 +1082,15 @@ int CCompositor::getWindowsOnWorkspace(const int& id) {
     }
 
     return no;
+}
+
+CWindow* CCompositor::getUrgentWindow() {
+    for (auto& w : m_vWindows) {
+        if (w->m_bIsMapped && w->m_bIsUrgent)
+            return w.get();
+    }
+
+    return nullptr;
 }
 
 bool CCompositor::hasUrgentWindowOnWorkspace(const int& id) {
@@ -1643,6 +1679,10 @@ void CCompositor::swapActiveWorkspaces(CMonitor* pMonitorA, CMonitor* pMonitorB)
 CMonitor* CCompositor::getMonitorFromString(const std::string& name) {
     if (name[0] == '+' || name[0] == '-') {
         // relative
+
+        if (m_vMonitors.size() == 1)
+            return m_vMonitors.begin()->get();
+
         const auto OFFSET = name[0] == '-' ? name : name.substr(1);
 
         if (!isNumber(OFFSET)) {
@@ -1671,7 +1711,7 @@ CMonitor* CCompositor::getMonitorFromString(const std::string& name) {
 
         if (currentPlace != std::clamp(currentPlace, 0, (int)m_vMonitors.size())) {
             Debug::log(WARN, "Error in getMonitorFromString: Vaxry's code sucks.");
-            currentPlace = std::clamp(currentPlace, 0, (int)m_vMonitors.size());
+            currentPlace = std::clamp(currentPlace, 0, (int)m_vMonitors.size() - 1);
         }
 
         return m_vMonitors[currentPlace].get();
