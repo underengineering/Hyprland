@@ -21,6 +21,8 @@ void CHyprError::createQueued() {
         m_tTexture.destroyTexture();
     }
 
+    m_fFadeOpacity.setConfig(g_pConfigManager->getAnimationPropertyConfig("fadeIn"));
+
     m_fFadeOpacity.setValueAndWarp(0.f);
     m_fFadeOpacity = 1.f;
 
@@ -48,9 +50,9 @@ void CHyprError::createQueued() {
 
     const double X      = PAD;
     const double Y      = PAD;
-    const double RADIUS = PAD;
     const double WIDTH  = PMONITOR->vecPixelSize.x - PAD * 2;
     const double HEIGHT = (FONTSIZE + 2 * (FONTSIZE / 10.0)) * LINECOUNT + 3;
+    const double RADIUS = PAD > HEIGHT / 2 ? HEIGHT / 2 - 1 : PAD;
 
     m_bDamageBox = {(int)PMONITOR->vecPosition.x, (int)PMONITOR->vecPosition.y, (int)PMONITOR->vecPixelSize.x, (int)HEIGHT + (int)PAD * 2};
 
@@ -61,7 +63,7 @@ void CHyprError::createQueued() {
     cairo_arc(CAIRO, X + RADIUS, Y + RADIUS, RADIUS, 180 * DEGREES, 270 * DEGREES);
     cairo_close_path(CAIRO);
 
-    cairo_set_source_rgba(CAIRO, m_cQueued.r, m_cQueued.g, m_cQueued.g, m_cQueued.a);
+    cairo_set_source_rgba(CAIRO, m_cQueued.r, m_cQueued.g, m_cQueued.b, m_cQueued.a);
     cairo_fill_preserve(CAIRO);
     cairo_set_source_rgba(CAIRO, 0, 0, 0, 1);
     cairo_set_line_width(CAIRO, 2);
@@ -129,6 +131,7 @@ void CHyprError::draw() {
                 m_szQueued   = "";
                 return;
             } else {
+                m_fFadeOpacity.setConfig(g_pConfigManager->getAnimationPropertyConfig("fadeOut"));
                 m_fFadeOpacity = 0.f;
             }
         }

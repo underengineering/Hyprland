@@ -1197,7 +1197,7 @@ void CCompositor::cleanupFadingOut(const int& monid) {
         // sometimes somehow fucking happens wtf
         bool exists = false;
         for (auto& m : m_vMonitors) {
-            for (auto& lsl : m->m_aLayerSurfaceLists) {
+            for (auto& lsl : m->m_aLayerSurfaceLayers) {
                 for (auto& lsp : lsl) {
                     if (lsp.get() == ls) {
                         exists = true;
@@ -1233,7 +1233,7 @@ void CCompositor::cleanupFadingOut(const int& monid) {
             g_pHyprOpenGL->m_mLayerFramebuffers.erase(ls);
 
             for (auto& m : m_vMonitors) {
-                for (auto& lsl : m->m_aLayerSurfaceLists) {
+                for (auto& lsl : m->m_aLayerSurfaceLayers) {
                     if (!lsl.empty() && std::find_if(lsl.begin(), lsl.end(), [&](std::unique_ptr<SLayerSurface>& other) { return other.get() == ls; }) != lsl.end()) {
                         std::erase_if(lsl, [&](std::unique_ptr<SLayerSurface>& other) { return other.get() == ls; });
                     }
@@ -1270,13 +1270,16 @@ void CCompositor::addToFadingOutSafe(CWindow* pWindow) {
 
 CWindow* CCompositor::getWindowInDirection(CWindow* pWindow, char dir) {
 
-    const auto WINDOWIDEALBB = pWindow->getWindowIdealBoundingBoxIgnoreReserved();
+    // 0 -> history, 1 -> shared length
+    static auto* const PMETHOD = &g_pConfigManager->getConfigValuePtr("binds:focus_preferred_method")->intValue;
 
-    const auto POSA  = Vector2D(WINDOWIDEALBB.x, WINDOWIDEALBB.y);
-    const auto SIZEA = Vector2D(WINDOWIDEALBB.width, WINDOWIDEALBB.height);
+    const auto         WINDOWIDEALBB = pWindow->getWindowIdealBoundingBoxIgnoreReserved();
 
-    auto       longestIntersect       = -1;
-    CWindow*   longestIntersectWindow = nullptr;
+    const auto         POSA  = Vector2D(WINDOWIDEALBB.x, WINDOWIDEALBB.y);
+    const auto         SIZEA = Vector2D(WINDOWIDEALBB.width, WINDOWIDEALBB.height);
+
+    auto               leaderValue  = -1;
+    CWindow*           leaderWindow = nullptr;
 
     for (auto& w : m_vWindows) {
         if (w.get() == pWindow || !w->m_bIsMapped || w->isHidden() || w->m_bIsFloating || !isWorkspaceVisible(w->m_iWorkspaceID))
@@ -1291,50 +1294,62 @@ CWindow* CCompositor::getWindowInDirection(CWindow* pWindow, char dir) {
         const auto POSB  = Vector2D(BWINDOWIDEALBB.x, BWINDOWIDEALBB.y);
         const auto SIZEB = Vector2D(BWINDOWIDEALBB.width, BWINDOWIDEALBB.height);
 
+        double     intersectLength = -1;
+
         switch (dir) {
             case 'l':
                 if (STICKS(POSA.x, POSB.x + SIZEB.x)) {
-                    const auto INTERSECTLEN = std::max(0.0, std::min(POSA.y + SIZEA.y, POSB.y + SIZEB.y) - std::max(POSA.y, POSB.y));
-                    if (INTERSECTLEN > longestIntersect) {
-                        longestIntersect       = INTERSECTLEN;
-                        longestIntersectWindow = w.get();
-                    }
+                    intersectLength = std::max(0.0, std::min(POSA.y + SIZEA.y, POSB.y + SIZEB.y) - std::max(POSA.y, POSB.y));
                 }
                 break;
             case 'r':
                 if (STICKS(POSA.x + SIZEA.x, POSB.x)) {
-                    const auto INTERSECTLEN = std::max(0.0, std::min(POSA.y + SIZEA.y, POSB.y + SIZEB.y) - std::max(POSA.y, POSB.y));
-                    if (INTERSECTLEN > longestIntersect) {
-                        longestIntersect       = INTERSECTLEN;
-                        longestIntersectWindow = w.get();
-                    }
+                    intersectLength = std::max(0.0, std::min(POSA.y + SIZEA.y, POSB.y + SIZEB.y) - std::max(POSA.y, POSB.y));
                 }
                 break;
             case 't':
             case 'u':
                 if (STICKS(POSA.y, POSB.y + SIZEB.y)) {
-                    const auto INTERSECTLEN = std::max(0.0, std::min(POSA.x + SIZEA.x, POSB.x + SIZEB.x) - std::max(POSA.x, POSB.x));
-                    if (INTERSECTLEN > longestIntersect) {
-                        longestIntersect       = INTERSECTLEN;
-                        longestIntersectWindow = w.get();
-                    }
+                    intersectLength = std::max(0.0, std::min(POSA.x + SIZEA.x, POSB.x + SIZEB.x) - std::max(POSA.x, POSB.x));
                 }
                 break;
             case 'b':
             case 'd':
                 if (STICKS(POSA.y + SIZEA.y, POSB.y)) {
-                    const auto INTERSECTLEN = std::max(0.0, std::min(POSA.x + SIZEA.x, POSB.x + SIZEB.x) - std::max(POSA.x, POSB.x));
-                    if (INTERSECTLEN > longestIntersect) {
-                        longestIntersect       = INTERSECTLEN;
-                        longestIntersectWindow = w.get();
-                    }
+                    intersectLength = std::max(0.0, std::min(POSA.x + SIZEA.x, POSB.x + SIZEB.x) - std::max(POSA.x, POSB.x));
                 }
                 break;
         }
+
+        if (*PMETHOD == 0 /* history */) {
+            if (intersectLength > 0) {
+
+                // get idx
+                int windowIDX = -1;
+                for (size_t i = 0; i < g_pCompositor->m_vWindowFocusHistory.size(); ++i) {
+                    if (g_pCompositor->m_vWindowFocusHistory[i] == w.get()) {
+                        windowIDX = i;
+                        break;
+                    }
+                }
+
+                windowIDX = g_pCompositor->m_vWindowFocusHistory.size() - windowIDX;
+
+                if (windowIDX > leaderValue) {
+                    leaderValue  = windowIDX;
+                    leaderWindow = w.get();
+                }
+            }
+        } else /* length */ {
+            if (intersectLength > leaderValue) {
+                leaderValue  = intersectLength;
+                leaderWindow = w.get();
+            }
+        }
     }
 
-    if (longestIntersect != -1)
-        return longestIntersectWindow;
+    if (leaderValue != -1)
+        return leaderWindow;
 
     return nullptr;
 }
@@ -1559,9 +1574,12 @@ void CCompositor::updateWindowAnimatedDecorationValues(CWindow* pWindow) {
     if (RENDERDATA.isBorderGradient)
         setBorderColor(*RENDERDATA.borderGradient);
     else
-        setBorderColor(pWindow == m_pLastWindow ?
-                           (pWindow->m_sSpecialRenderData.activeBorderColor >= 0 ? CGradientValueData(CColor(pWindow->m_sSpecialRenderData.activeBorderColor)) : *ACTIVECOL) :
-                           (pWindow->m_sSpecialRenderData.inactiveBorderColor >= 0 ? CGradientValueData(CColor(pWindow->m_sSpecialRenderData.inactiveBorderColor)) : *INACTIVECOL));
+        setBorderColor(pWindow == m_pLastWindow ? (pWindow->m_sSpecialRenderData.activeBorderColor.toUnderlying() >= 0 ?
+                                                       CGradientValueData(CColor(pWindow->m_sSpecialRenderData.activeBorderColor.toUnderlying())) :
+                                                       *ACTIVECOL) :
+                                                  (pWindow->m_sSpecialRenderData.inactiveBorderColor.toUnderlying() >= 0 ?
+                                                       CGradientValueData(CColor(pWindow->m_sSpecialRenderData.inactiveBorderColor.toUnderlying())) :
+                                                       *INACTIVECOL));
 
     // opacity
     const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(pWindow->m_iWorkspaceID);
@@ -1569,12 +1587,12 @@ void CCompositor::updateWindowAnimatedDecorationValues(CWindow* pWindow) {
         pWindow->m_fActiveInactiveAlpha = *PFULLSCREENALPHA;
     } else {
         if (pWindow == m_pLastWindow)
-            pWindow->m_fActiveInactiveAlpha =
-                pWindow->m_sSpecialRenderData.alphaOverride ? pWindow->m_sSpecialRenderData.alpha : pWindow->m_sSpecialRenderData.alpha * *PACTIVEALPHA;
+            pWindow->m_fActiveInactiveAlpha = pWindow->m_sSpecialRenderData.alphaOverride.toUnderlying() ? pWindow->m_sSpecialRenderData.alpha.toUnderlying() :
+                                                                                                           pWindow->m_sSpecialRenderData.alpha.toUnderlying() * *PACTIVEALPHA;
         else
-            pWindow->m_fActiveInactiveAlpha = pWindow->m_sSpecialRenderData.alphaInactive != -1 ?
-                (pWindow->m_sSpecialRenderData.alphaInactiveOverride ? pWindow->m_sSpecialRenderData.alphaInactive :
-                                                                       pWindow->m_sSpecialRenderData.alphaInactive * *PINACTIVEALPHA) :
+            pWindow->m_fActiveInactiveAlpha = pWindow->m_sSpecialRenderData.alphaInactive.toUnderlying() != -1 ?
+                (pWindow->m_sSpecialRenderData.alphaInactiveOverride.toUnderlying() ? pWindow->m_sSpecialRenderData.alphaInactive.toUnderlying() :
+                                                                                      pWindow->m_sSpecialRenderData.alphaInactive.toUnderlying() * *PINACTIVEALPHA) :
                 *PINACTIVEALPHA;
     }
 
@@ -1704,12 +1722,12 @@ CMonitor* CCompositor::getMonitorFromString(const std::string& name) {
         currentPlace += offsetLeft;
 
         if (currentPlace < 0) {
-            currentPlace = m_vMonitors.size() - currentPlace;
+            currentPlace = m_vMonitors.size() + currentPlace;
         } else {
             currentPlace = currentPlace % m_vMonitors.size();
         }
 
-        if (currentPlace != std::clamp(currentPlace, 0, (int)m_vMonitors.size())) {
+        if (currentPlace != std::clamp(currentPlace, 0, (int)m_vMonitors.size() - 1)) {
             Debug::log(WARN, "Error in getMonitorFromString: Vaxry's code sucks.");
             currentPlace = std::clamp(currentPlace, 0, (int)m_vMonitors.size() - 1);
         }
@@ -1890,7 +1908,7 @@ void CCompositor::setWindowFullscreen(CWindow* pWindow, bool on, eFullscreenMode
         }
     }
 
-    for (auto& ls : PMONITOR->m_aLayerSurfaceLists[ZWLR_LAYER_SHELL_V1_LAYER_TOP]) {
+    for (auto& ls : PMONITOR->m_aLayerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_TOP]) {
         if (!ls->fadingOut)
             ls->alpha = pWindow->m_bIsFullscreen && mode == FULLSCREEN_FULL ? 0.f : 1.f;
     }
@@ -2022,7 +2040,7 @@ void CCompositor::warpCursorTo(const Vector2D& pos) {
 
 SLayerSurface* CCompositor::getLayerSurfaceFromWlr(wlr_layer_surface_v1* pLS) {
     for (auto& m : m_vMonitors) {
-        for (auto& lsl : m->m_aLayerSurfaceLists) {
+        for (auto& lsl : m->m_aLayerSurfaceLayers) {
             for (auto& ls : lsl) {
                 if (ls->layerSurface == pLS)
                     return ls.get();
@@ -2041,7 +2059,7 @@ void CCompositor::closeWindow(CWindow* pWindow) {
 
 SLayerSurface* CCompositor::getLayerSurfaceFromSurface(wlr_surface* pSurface) {
     for (auto& m : m_vMonitors) {
-        for (auto& lsl : m->m_aLayerSurfaceLists) {
+        for (auto& lsl : m->m_aLayerSurfaceLayers) {
             for (auto& ls : lsl) {
                 if (ls->layerSurface && ls->layerSurface->surface == pSurface)
                     return ls.get();

@@ -193,10 +193,11 @@ void CMonitor::onDisconnect() {
     hyprListener_monitorFrame.removeCallback();
 
     for (size_t i = 0; i < 4; ++i) {
-        for (auto& ls : m_aLayerSurfaceLists[i]) {
-            wlr_layer_surface_v1_destroy(ls->layerSurface);
+        for (auto& ls : m_aLayerSurfaceLayers[i]) {
+            if (ls->layerSurface && !ls->fadingOut)
+                wlr_layer_surface_v1_destroy(ls->layerSurface);
         }
-        m_aLayerSurfaceLists[i].clear();
+        m_aLayerSurfaceLayers[i].clear();
     }
 
     Debug::log(LOG, "Removed monitor %s!", szName.c_str());
