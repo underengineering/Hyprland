@@ -10,14 +10,16 @@
 struct SMonitorRule;
 
 // TODO: add fuller damage tracking for updating only parts of a window
-enum DAMAGETRACKINGMODES {
+enum DAMAGETRACKINGMODES
+{
     DAMAGE_TRACKING_INVALID = -1,
     DAMAGE_TRACKING_NONE    = 0,
     DAMAGE_TRACKING_MONITOR,
     DAMAGE_TRACKING_FULL
 };
 
-enum eRenderPassMode {
+enum eRenderPassMode
+{
     RENDER_PASS_ALL = 0,
     RENDER_PASS_MAIN,
     RENDER_PASS_POPUP
@@ -25,6 +27,7 @@ enum eRenderPassMode {
 
 class CToplevelExportProtocolManager;
 class CInputManager;
+struct SSessionLockSurface;
 
 class CHyprRenderer {
   public:
@@ -43,7 +46,7 @@ class CHyprRenderer {
     bool                shouldRenderWindow(CWindow*);
     void                ensureCursorRenderingMode();
     bool                shouldRenderCursor();
-    void                calculateUVForWindowSurface(CWindow*, wlr_surface*, bool main = false);
+    void                calculateUVForSurface(CWindow*, wlr_surface*, bool main = false);
 
     bool                m_bWindowRequestedCursorHide = false;
     bool                m_bBlockSurfaceFeedback      = false;
@@ -61,6 +64,7 @@ class CHyprRenderer {
     void renderWorkspaceWithFullscreenWindow(CMonitor*, CWorkspace*, timespec*);
     void renderWindow(CWindow*, CMonitor*, timespec*, bool, eRenderPassMode, bool ignorePosition = false, bool ignoreAllGeometry = false);
     void renderLayer(SLayerSurface*, CMonitor*, timespec*);
+    void renderSessionLockSurface(SSessionLockSurface*, CMonitor*, timespec*);
     void renderDragIcon(CMonitor*, timespec*);
     void renderIMEPopup(SIMEPopup*, CMonitor*, timespec*);
 

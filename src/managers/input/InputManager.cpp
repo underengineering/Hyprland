@@ -35,6 +35,15 @@ void CInputManager::onMouseWarp(wlr_pointer_motion_absolute_event* e) {
     m_bLastInputTouch = false;
 }
 
+void CInputManager::simulateMouseMovement() {
+    timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    m_vLastCursorPosFloored = m_vLastCursorPosFloored - Vector2D(1, 1); // hack: force the mouseMoveUnified to report without making this a refocus.
+    mouseMoveUnified(now.tv_sec * 1000 + now.tv_nsec / 10000000);
+
+    m_tmrLastCursorMovement.reset();
+}
+
 void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
     static auto* const PFOLLOWMOUSE   = &g_pConfigManager->getConfigValuePtr("input:follow_mouse")->intValue;
     static auto* const PMOUSEDPMS     = &g_pConfigManager->getConfigValuePtr("misc:mouse_move_enables_dpms")->intValue;
@@ -76,7 +85,7 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
 
     // constraints
     // All constraints TODO: multiple mice?
-    if (g_pCompositor->m_sSeat.mouse->currentConstraint && !g_pCompositor->m_sSeat.exclusiveClient) {
+    if (g_pCompositor->m_sSeat.mouse->currentConstraint && !g_pCompositor->m_sSeat.exclusiveClient && !g_pSessionLockManager->isSessionLocked()) {
         // XWayland windows sometimes issue constraints weirdly.
         // TODO: We probably should search their parent. wlr_xwayland_surface->parent
         const auto CONSTRAINTWINDOW = g_pCompositor->getConstraintWindow(g_pCompositor->m_sSeat.mouse);
@@ -138,6 +147,16 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
         const auto ACTIVEWORKSPACE = g_pCompositor->getWorkspaceByID(PMONITOR->activeWorkspace);
         g_pCompositor->deactivateAllWLRWorkspaces(ACTIVEWORKSPACE->m_pWlrHandle);
         ACTIVEWORKSPACE->setActive(true);
+    }
+
+    if (g_pSessionLockManager->isSessionLocked()) {
+        const auto PSLS = PMONITOR ? g_pSessionLockManager->getSessionLockSurfaceForMonitor(PMONITOR->ID) : nullptr;
+
+        if (!PSLS)
+            return;
+
+        foundSurface = PSLS->pWlrLockSurface->surface;
+        surfacePos   = PMONITOR->vecPosition;
     }
 
     // overlay is above fullscreen
@@ -1180,7 +1199,7 @@ void CInputManager::setTabletConfigs() {
             const auto LIBINPUTDEV = (libinput_device*)wlr_libinput_get_device_handle(t.wlrDevice);
 
             const int  ROTATION = std::clamp(HASCONFIG ? g_pConfigManager->getDeviceInt(t.name, "transform") : g_pConfigManager->getInt("input:tablet:transform"), 0, 7);
-            Debug::log(LOG, "Setting calibration matrix for device %s", t.name);
+            Debug::log(LOG, "Setting calibration matrix for device %s", t.name.c_str());
             libinput_device_config_calibration_set_matrix(LIBINPUTDEV, MATRICES[ROTATION]);
 
             const auto OUTPUT   = HASCONFIG ? g_pConfigManager->getDeviceString(t.name, "output") : g_pConfigManager->getString("input:tablet:output");

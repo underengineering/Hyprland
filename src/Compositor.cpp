@@ -190,6 +190,8 @@ CCompositor::CCompositor() {
 
     m_sWLRHeadlessBackend = wlr_headless_backend_create(m_sWLDisplay);
 
+    m_sWLRSessionLockMgr = wlr_session_lock_manager_v1_create(m_sWLDisplay);
+
     if (!m_sWLRHeadlessBackend) {
         Debug::log(CRIT, "Couldn't create the headless backend");
         throw std::runtime_error("wlr_headless_backend_create() failed!");
@@ -253,6 +255,7 @@ void CCompositor::initAllSignals() {
     addWLSignal(&m_sWLRIMEMgr->events.input_method, &Events::listen_newIME, m_sWLRIMEMgr, "IMEMgr");
     addWLSignal(&m_sWLRTextInputMgr->events.text_input, &Events::listen_newTextInput, m_sWLRTextInputMgr, "TextInputMgr");
     addWLSignal(&m_sWLRActivation->events.request_activate, &Events::listen_activateXDG, m_sWLRActivation, "ActivationV1");
+    addWLSignal(&m_sWLRSessionLockMgr->events.new_lock, &Events::listen_newSessionLock, m_sWLRSessionLockMgr, "SessionLockMgr");
 
     if (m_sWRLDRMLeaseMgr)
         addWLSignal(&m_sWRLDRMLeaseMgr->events.request, &Events::listen_leaseRequest, &m_sWRLDRMLeaseMgr, "DRM");
@@ -339,6 +342,9 @@ void CCompositor::startCompositor() {
 
     Debug::log(LOG, "Creating the ProtocolManager!");
     g_pProtocolManager = std::make_unique<CProtocolManager>();
+
+    Debug::log(LOG, "Creating the SessionLockManager!");
+    g_pSessionLockManager = std::make_unique<CSessionLockManager>();
 
     Debug::log(LOG, "Creating the EventManager!");
     g_pEventManager = std::make_unique<CEventManager>();
@@ -1112,7 +1118,24 @@ CWindow* CCompositor::getFirstWindowOnWorkspace(const int& id) {
 }
 
 bool CCompositor::doesSeatAcceptInput(wlr_surface* surface) {
-    return !m_sSeat.exclusiveClient || (surface && m_sSeat.exclusiveClient == wl_resource_get_client(surface->resource));
+    if (g_pSessionLockManager->isSessionLocked()) {
+        if (g_pSessionLockManager->isSurfaceSessionLock(surface))
+            return true;
+
+        if (surface && m_sSeat.exclusiveClient == wl_resource_get_client(surface->resource))
+            return true;
+
+        return false;
+    }
+
+    if (m_sSeat.exclusiveClient) {
+        if (surface && m_sSeat.exclusiveClient == wl_resource_get_client(surface->resource))
+            return true;
+
+        return false;
+    }
+
+    return true;
 }
 
 bool CCompositor::isWindowActive(CWindow* pWindow) {
@@ -1565,8 +1588,8 @@ void CCompositor::updateWindowAnimatedDecorationValues(CWindow* pWindow) {
 
         pWindow->m_cRealBorderColorPrevious = pWindow->m_cRealBorderColor;
         pWindow->m_cRealBorderColor         = grad;
-        pWindow->m_fBorderAnimationProgress.setValueAndWarp(0.f);
-        pWindow->m_fBorderAnimationProgress = 1.f;
+        pWindow->m_fBorderFadeAnimationProgress.setValueAndWarp(0.f);
+        pWindow->m_fBorderFadeAnimationProgress = 1.f;
     };
 
     // border
@@ -1580,6 +1603,10 @@ void CCompositor::updateWindowAnimatedDecorationValues(CWindow* pWindow) {
                                                   (pWindow->m_sSpecialRenderData.inactiveBorderColor.toUnderlying() >= 0 ?
                                                        CGradientValueData(CColor(pWindow->m_sSpecialRenderData.inactiveBorderColor.toUnderlying())) :
                                                        *INACTIVECOL));
+
+    // tick angle if it's not running (aka dead)
+    if (!pWindow->m_fBorderAngleAnimationProgress.isBeingAnimated())
+        pWindow->m_fBorderAngleAnimationProgress.setValueAndWarp(0.f);
 
     // opacity
     const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(pWindow->m_iWorkspaceID);
@@ -2021,14 +2048,17 @@ CWindow* CCompositor::getWindowByRegex(const std::string& regexp) {
     return nullptr;
 }
 
-void CCompositor::warpCursorTo(const Vector2D& pos) {
+void CCompositor::warpCursorTo(const Vector2D& pos, bool force) {
 
     // warpCursorTo should only be used for warps that
     // should be disabled with no_cursor_warps
 
     static auto* const PNOWARPS = &g_pConfigManager->getConfigValuePtr("general:no_cursor_warps")->intValue;
 
-    if (*PNOWARPS)
+    if (*PNOWARPS && !force)
+        return;
+
+    if (!m_sSeat.mouse)
         return;
 
     wlr_cursor_warp(m_sWLRCursor, m_sSeat.mouse->mouse, pos.x, pos.y);
@@ -2160,7 +2190,7 @@ void CCompositor::renameWorkspace(const int& id, const std::string& name) {
     if (isWorkspaceSpecial(id))
         return;
 
-    Debug::log(LOG, "renameWorkspace: Renaming workspace %d to '%s'", id, name);
+    Debug::log(LOG, "renameWorkspace: Renaming workspace %d to '%s'", id, name.c_str());
     wlr_ext_workspace_handle_v1_set_name(PWORKSPACE->m_pWlrHandle, name.c_str());
     PWORKSPACE->m_szName = name;
 }
