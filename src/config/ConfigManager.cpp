@@ -154,6 +154,7 @@ void CConfigManager::setDefaultVars() {
     configValues["input:touchpad:natural_scroll"].intValue          = 0;
     configValues["input:touchpad:disable_while_typing"].intValue    = 1;
     configValues["input:touchpad:clickfinger_behavior"].intValue    = 0;
+    configValues["input:touchpad:tap_button_map"].strValue          = STRVAL_EMPTY;
     configValues["input:touchpad:middle_button_emulation"].intValue = 0;
     configValues["input:touchpad:tap-to-click"].intValue            = 1;
     configValues["input:touchpad:tap-and-drag"].intValue            = 1;
@@ -199,6 +200,7 @@ void CConfigManager::setDeviceDefaultVars(const std::string& dev) {
     cfgValues["repeat_rate"].intValue             = 25;
     cfgValues["repeat_delay"].intValue            = 600;
     cfgValues["natural_scroll"].intValue          = 0;
+    cfgValues["tap_button_map"].strValue          = STRVAL_EMPTY;
     cfgValues["numlock_by_default"].intValue      = 0;
     cfgValues["disable_while_typing"].intValue    = 1;
     cfgValues["clickfinger_behavior"].intValue    = 0;
@@ -921,14 +923,27 @@ void CConfigManager::handleWindowRuleV2(const std::string& command, const std::s
     m_dWindowRules.push_back(rule);
 }
 
+void CConfigManager::updateBlurredLS(const std::string& name, const bool forceBlur) {
+    for (auto& m : g_pCompositor->m_vMonitors) {
+        for (auto& lsl : m->m_aLayerSurfaceLayers) {
+            for (auto& ls : lsl) {
+                if (ls->szNamespace == name)
+                    ls->forceBlur = forceBlur;
+            }
+        }
+    }
+}
+
 void CConfigManager::handleBlurLS(const std::string& command, const std::string& value) {
     if (value.find("remove,") == 0) {
         const auto TOREMOVE = removeBeginEndSpacesTabs(value.substr(7));
-        std::erase_if(m_dBlurLSNamespaces, [&](const auto& other) { return other == TOREMOVE; });
+        if (std::erase_if(m_dBlurLSNamespaces, [&](const auto& other) { return other == TOREMOVE; }))
+            updateBlurredLS(TOREMOVE, false);
         return;
     }
 
     m_dBlurLSNamespaces.emplace_back(value);
+    updateBlurredLS(value, true);
 }
 
 void CConfigManager::handleDefaultWorkspace(const std::string& command, const std::string& value) {
@@ -1126,10 +1141,7 @@ void CConfigManager::parseLine(std::string& line) {
         startPos++;
     }
 
-    // remove shit at the beginning
-    while (line[0] == ' ' || line[0] == '\t') {
-        line = line.substr(1);
-    }
+    line = removeBeginEndSpacesTabs(line);
 
     if (line.contains(" {")) {
         auto cat = line.substr(0, line.find(" {"));
@@ -1321,10 +1333,14 @@ void CConfigManager::loadConfigLoadVars() {
 }
 
 void CConfigManager::tick() {
-    static const char* const ENVHOME = getenv("HOME");
-
-    const std::string        CONFIGPATH = ENVHOME + (ISDEBUG ? (std::string) "/.config/hypr/hyprlandd.conf" : (std::string) "/.config/hypr/hyprland.conf");
-
+    std::string CONFIGPATH;
+    if (g_pCompositor->explicitConfigPath.empty()) {
+        static const char* const ENVHOME = getenv("HOME");
+        CONFIGPATH                       = ENVHOME + (ISDEBUG ? (std::string) "/.config/hypr/hyprlandd.conf" : (std::string) "/.config/hypr/hyprland.conf");
+    } else {
+        CONFIGPATH = g_pCompositor->explicitConfigPath;
+    }
+    
     if (!std::filesystem::exists(CONFIGPATH)) {
         Debug::log(ERR, "Config doesn't exist??");
         return;

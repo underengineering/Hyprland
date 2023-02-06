@@ -56,6 +56,7 @@ void Events::listener_mapWindow(void* owner, void* data) {
     PWINDOW->m_bReadyToDelete = false;
     PWINDOW->m_bFadingOut     = false;
     PWINDOW->m_szTitle        = g_pXWaylandManager->getTitle(PWINDOW);
+    PWINDOW->m_iX11Type       = PWINDOW->m_bIsX11 ? (PWINDOW->m_uSurface.xwayland->override_redirect ? 2 : 1) : 1;
 
     if (g_pInputManager->m_bLastFocusOnLS) // waybar fix
         g_pInputManager->releaseAllMouseButtons();
@@ -740,8 +741,10 @@ void Events::listener_setTitleWindow(void* owner, void* data) {
 
     PWINDOW->m_szTitle = g_pXWaylandManager->getTitle(PWINDOW);
 
-    if (PWINDOW == g_pCompositor->m_pLastWindow) // if it's the active, let's post an event to update others
+    if (PWINDOW == g_pCompositor->m_pLastWindow) { // if it's the active, let's post an event to update others
         g_pEventManager->postEvent(SHyprIPCEvent{"activewindow", g_pXWaylandManager->getAppIDClass(PWINDOW) + "," + PWINDOW->m_szTitle});
+        g_pEventManager->postEvent(SHyprIPCEvent{"activewindowv2", getFormat("%x", PWINDOW)});
+    }
 
     PWINDOW->updateDynamicRules();
     g_pCompositor->updateWindowAnimatedDecorationValues(PWINDOW);
@@ -851,7 +854,18 @@ void Events::listener_activateX11(void* owner, void* data) {
 
     Debug::log(LOG, "X11 Activate request for window %x", PWINDOW);
 
-    if (PWINDOW->m_iX11Type != 1 || PWINDOW == g_pCompositor->m_pLastWindow)
+    if (PWINDOW->m_iX11Type == 2) {
+
+        Debug::log(LOG, "Unmanaged X11 %x requests activate", PWINDOW);
+
+        if (g_pCompositor->m_pLastWindow && g_pCompositor->m_pLastWindow->getPID() != PWINDOW->getPID())
+            return;
+
+        g_pCompositor->focusWindow(PWINDOW);
+        return;
+    }
+
+    if (PWINDOW == g_pCompositor->m_pLastWindow)
         return;
 
     g_pEventManager->postEvent(SHyprIPCEvent{"urgent", getFormat("%x", PWINDOW)});
