@@ -120,6 +120,7 @@ void Events::listener_monitorFrame(void* owner, void* data) {
     static auto* const                                    PDAMAGETRACKINGMODE = &g_pConfigManager->getConfigValuePtr("debug:damage_tracking")->intValue;
     static auto* const                                    PDAMAGEBLINK        = &g_pConfigManager->getConfigValuePtr("debug:damage_blink")->intValue;
     static auto* const                                    PNODIRECTSCANOUT    = &g_pConfigManager->getConfigValuePtr("misc:no_direct_scanout")->intValue;
+    static auto* const                                    PVFR                = &g_pConfigManager->getConfigValuePtr("misc:vfr")->intValue;
 
     static int                                            damageBlinkCleanup = 0; // because double-buffered
 
@@ -148,8 +149,7 @@ void Events::listener_monitorFrame(void* owner, void* data) {
 
     // checks //
     if (PMONITOR->ID == g_pHyprRenderer->m_pMostHzMonitor->ID ||
-        g_pHyprRenderer->m_pMostHzMonitor->output->adaptive_sync_status ==
-            WLR_OUTPUT_ADAPTIVE_SYNC_ENABLED) { // unfortunately with VFR we don't have the guarantee mostHz is going to be updated all the time, so we have to ignore that
+        *PVFR == 1) { // unfortunately with VFR we don't have the guarantee mostHz is going to be updated all the time, so we have to ignore that
         g_pCompositor->sanityCheckWorkspaces();
         g_pAnimationManager->tick();
 
@@ -176,6 +176,8 @@ void Events::listener_monitorFrame(void* owner, void* data) {
             g_pHyprRenderer->m_pLastScanout = nullptr;
         }
     }
+
+    g_pProtocolManager->m_pToplevelExportProtocolManager->onMonitorRender(PMONITOR); // dispatch any toplevel sharing
 
     timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
@@ -204,7 +206,7 @@ void Events::listener_monitorFrame(void* owner, void* data) {
         pixman_region32_fini(&damage);
         wlr_output_rollback(PMONITOR->output);
 
-        if (*PDAMAGEBLINK || PMONITOR->output->adaptive_sync_status == WLR_OUTPUT_ADAPTIVE_SYNC_DISABLED)
+        if (*PDAMAGEBLINK || *PVFR == 0)
             g_pCompositor->scheduleFrameForMonitor(PMONITOR);
 
         return;
@@ -285,8 +287,6 @@ void Events::listener_monitorFrame(void* owner, void* data) {
 
     g_pHyprOpenGL->end();
 
-    g_pProtocolManager->m_pToplevelExportProtocolManager->onMonitorRender(PMONITOR); // dispatch any toplevel sharing
-
     // calc frame damage
     pixman_region32_t frameDamage;
     pixman_region32_init(&frameDamage);
@@ -311,7 +311,7 @@ void Events::listener_monitorFrame(void* owner, void* data) {
     if (!wlr_output_commit(PMONITOR->output))
         return;
 
-    if (*PDAMAGEBLINK || PMONITOR->output->adaptive_sync_status == WLR_OUTPUT_ADAPTIVE_SYNC_DISABLED)
+    if (*PDAMAGEBLINK || *PVFR == 0)
         g_pCompositor->scheduleFrameForMonitor(PMONITOR);
 
     if (*PDEBUGOVERLAY == 1) {

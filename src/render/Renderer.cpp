@@ -212,6 +212,18 @@ void CHyprRenderer::renderWorkspaceWithFullscreenWindow(CMonitor* pMonitor, CWor
     // if correct monitor draw hyprerror
     if (pMonitor == g_pCompositor->m_vMonitors.front().get())
         g_pHyprError->draw();
+
+    if (g_pSessionLockManager->isSessionLocked()) {
+        const auto PSLS = g_pSessionLockManager->getSessionLockSurfaceForMonitor(pMonitor->ID);
+
+        if (!PSLS) {
+            // locked with no surface, fill with red
+            wlr_box boxe = {0, 0, INT16_MAX, INT16_MAX};
+            g_pHyprOpenGL->renderRect(&boxe, CColor(1.0, 0.2, 0.2, 1.0));
+        } else {
+            renderSessionLockSurface(PSLS, pMonitor, time);
+        }
+    }
 }
 
 void CHyprRenderer::renderWindow(CWindow* pWindow, CMonitor* pMonitor, timespec* time, bool decorate, eRenderPassMode mode, bool ignorePosition, bool ignoreAllGeometry) {
@@ -1183,6 +1195,10 @@ bool CHyprRenderer::applyMonitorRule(CMonitor* pMonitor, SMonitorRule* pMonitorR
         return true;
     }
 
+    // don't touch VR headsets
+    if (pMonitor->output->non_desktop)
+        return true;
+
     if (!pMonitor->m_bEnabled) {
         pMonitor->onConnect(true); // enable it.
         force = true;
@@ -1489,6 +1505,8 @@ bool CHyprRenderer::applyMonitorRule(CMonitor* pMonitor, SMonitorRule* pMonitorR
     Debug::log(LOG, "Monitor %s data dump: res %ix%i@%.2fHz, scale %.2f, transform %i, pos %ix%i, 10b %i", pMonitor->szName.c_str(), (int)pMonitor->vecPixelSize.x,
                (int)pMonitor->vecPixelSize.y, pMonitor->refreshRate, pMonitor->scale, (int)pMonitor->transform, (int)pMonitor->vecPosition.x, (int)pMonitor->vecPosition.y,
                (int)pMonitor->enabled10bit);
+
+    g_pInputManager->refocus();
 
     return true;
 }
