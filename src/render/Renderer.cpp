@@ -376,7 +376,11 @@ void CHyprRenderer::renderLayer(SLayerSurface* pLayer, CMonitor* pMonitor, times
     renderdata.w                     = pLayer->geometry.width;
     renderdata.h                     = pLayer->geometry.height;
     renderdata.blockBlurOptimization = pLayer->layer == ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM || pLayer->layer == ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND;
+
+    if (pLayer->ignoreZero)
+        g_pHyprOpenGL->m_RenderData.discardMode |= DISCARD_ALPHAZERO;
     wlr_surface_for_each_surface(pLayer->layerSurface->surface, renderSurface, &renderdata);
+    g_pHyprOpenGL->m_RenderData.discardMode &= ~DISCARD_ALPHAZERO;
 
     renderdata.squishOversized = false; // don't squish popups
     renderdata.dontRound       = true;
@@ -659,7 +663,7 @@ void countSubsurfacesIter(wlr_surface* pSurface, int x, int y, void* data) {
 }
 
 bool CHyprRenderer::attemptDirectScanout(CMonitor* pMonitor) {
-    if (!pMonitor->mirrors.empty())
+    if (!pMonitor->mirrors.empty() || pMonitor->isMirror())
         return false; // do not DS if this monitor is being mirrored. Will break the functionality.
 
     const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(pMonitor->activeWorkspace);
@@ -746,48 +750,20 @@ void CHyprRenderer::setWindowScanoutMode(CWindow* pWindow) {
         return;
     }
 
-    const auto RENDERERDRMFD = wlr_renderer_get_drm_fd(g_pCompositor->m_sWLRRenderer);
-    const auto BACKENDDRMFD  = wlr_backend_get_drm_fd(g_pCompositor->m_sWLRBackend);
+    const auto                                      PMONITOR = g_pCompositor->getMonitorFromID(pWindow->m_iMonitorID);
 
-    if (RENDERERDRMFD < 0 || BACKENDDRMFD < 0)
-        return;
-
-    auto deviceIDFromFD = [](int fd, unsigned long* deviceID) -> bool {
-        struct stat stat;
-        if (fstat(fd, &stat) != 0) {
-            return false;
-        }
-        *deviceID = stat.st_rdev;
-        return true;
+    const wlr_linux_dmabuf_feedback_v1_init_options INIT_OPTIONS = {
+        .main_renderer          = g_pCompositor->m_sWLRRenderer,
+        .scanout_primary_output = PMONITOR->output,
     };
 
-    unsigned long rendererDevice, scanoutDevice;
-    if (!deviceIDFromFD(RENDERERDRMFD, &rendererDevice) || !deviceIDFromFD(BACKENDDRMFD, &scanoutDevice))
+    wlr_linux_dmabuf_feedback_v1 feedback = {0};
+
+    if (!wlr_linux_dmabuf_feedback_v1_init_with_options(&feedback, &INIT_OPTIONS))
         return;
 
-    const auto PMONITOR = g_pCompositor->getMonitorFromID(pWindow->m_iMonitorID);
-
-    const auto POUTPUTFORMATS = wlr_output_get_primary_formats(PMONITOR->output, WLR_BUFFER_CAP_DMABUF);
-    if (!POUTPUTFORMATS)
-        return;
-
-    const auto         PRENDERERFORMATS = wlr_renderer_get_dmabuf_texture_formats(g_pCompositor->m_sWLRRenderer);
-    wlr_drm_format_set scanoutFormats   = {0};
-
-    if (!wlr_drm_format_set_intersect(&scanoutFormats, POUTPUTFORMATS, PRENDERERFORMATS))
-        return;
-
-    const wlr_linux_dmabuf_feedback_v1_tranche TRANCHES[] = {
-        {.target_device = scanoutDevice, .flags = ZWP_LINUX_DMABUF_FEEDBACK_V1_TRANCHE_FLAGS_SCANOUT, .formats = &scanoutFormats},
-        {.target_device = rendererDevice, .formats = PRENDERERFORMATS}};
-
-    const wlr_linux_dmabuf_feedback_v1 FEEDBACK = {.main_device = rendererDevice, .tranches_len = sizeof(TRANCHES) / sizeof(TRANCHES[0]), .tranches = TRANCHES};
-
-    if (!wlr_linux_dmabuf_v1_set_surface_feedback(g_pCompositor->m_sWLRLinuxDMABuf, g_pXWaylandManager->getWindowSurface(pWindow), &FEEDBACK)) {
-        Debug::log(ERR, "Error in scanout mode setting: wlr_linux_dmabuf_v1_set_surface_feedback returned false.");
-    }
-
-    wlr_drm_format_set_finish(&scanoutFormats);
+    wlr_linux_dmabuf_v1_set_surface_feedback(g_pCompositor->m_sWLRLinuxDMABuf, g_pXWaylandManager->getWindowSurface(pWindow), &feedback);
+    wlr_linux_dmabuf_feedback_v1_finish(&feedback);
 
     Debug::log(LOG, "Scanout mode ON set for %x", pWindow);
 }
@@ -1059,6 +1035,9 @@ void CHyprRenderer::damageSurface(wlr_surface* pSurface, double x, double y) {
     pixman_region32_init(&damageBoxForEach);
 
     for (auto& m : g_pCompositor->m_vMonitors) {
+        if (!m->output)
+            continue;
+
         double lx = 0, ly = 0;
         wlr_output_layout_output_coords(g_pCompositor->m_sWLROutputLayout, m->output, &lx, &ly);
 
@@ -1152,6 +1131,8 @@ void CHyprRenderer::damageMirrorsWith(CMonitor* pMonitor, pixman_region32_t* pRe
         wlr_region_scale_xy(&rg, &rg, scale.x, scale.y);
         pMonitor->addDamage(&rg);
         pixman_region32_fini(&rg);
+
+        g_pCompositor->scheduleFrameForMonitor(mirror);
     }
 }
 
@@ -1491,7 +1472,8 @@ bool CHyprRenderer::applyMonitorRule(CMonitor* pMonitor, SMonitorRule* pMonitorR
     g_pHyprOpenGL->destroyMonitorResources(pMonitor);
 
     // updato wlroots
-    wlr_output_layout_add(g_pCompositor->m_sWLROutputLayout, pMonitor->output, (int)pMonitor->vecPosition.x, (int)pMonitor->vecPosition.y);
+    if (!pMonitor->isMirror())
+        wlr_output_layout_add(g_pCompositor->m_sWLROutputLayout, pMonitor->output, (int)pMonitor->vecPosition.x, (int)pMonitor->vecPosition.y);
 
     // updato us
     arrangeLayersForMonitor(pMonitor->ID);
@@ -1505,8 +1487,6 @@ bool CHyprRenderer::applyMonitorRule(CMonitor* pMonitor, SMonitorRule* pMonitorR
     Debug::log(LOG, "Monitor %s data dump: res %ix%i@%.2fHz, scale %.2f, transform %i, pos %ix%i, 10b %i", pMonitor->szName.c_str(), (int)pMonitor->vecPixelSize.x,
                (int)pMonitor->vecPixelSize.y, pMonitor->refreshRate, pMonitor->scale, (int)pMonitor->transform, (int)pMonitor->vecPosition.x, (int)pMonitor->vecPosition.y,
                (int)pMonitor->enabled10bit);
-
-    g_pInputManager->refocus();
 
     return true;
 }

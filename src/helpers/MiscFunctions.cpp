@@ -209,7 +209,7 @@ std::string removeBeginEndSpacesTabs(std::string str) {
     }
 
     int countAfter = 0;
-    while (str.length() != 0 && (str[str.length() - countAfter - 1] == ' ' || str[str.length() - 1 - countAfter] == '\t')) {
+    while ((int)str.length() - countAfter - 1 >= 0 && (str[str.length() - countAfter - 1] == ' ' || str[str.length() - 1 - countAfter] == '\t')) {
         countAfter++;
     }
 
@@ -297,7 +297,7 @@ int getWorkspaceIDFromString(const std::string& in, std::string& outName) {
         if (!PWORKSPACE)
             return INT_MAX;
 
-        const auto PLASTWORKSPACE = g_pCompositor->getWorkspaceByID(PWORKSPACE->m_iPrevWorkspaceID);
+        const auto PLASTWORKSPACE = g_pCompositor->getWorkspaceByID(PWORKSPACE->m_sPrevWorkspace.iID);
 
         if (!PLASTWORKSPACE)
             return INT_MAX;
@@ -412,7 +412,11 @@ void logSystemInfo() {
 
     Debug::log(NONE, "\n");
 
+#if defined(__DragonFly__) || defined(__FreeBSD__)
+    const std::string GPUINFO = execAndGet("pciconf -lv | fgrep -A4 vga");
+#else
     const std::string GPUINFO = execAndGet("lspci -vnn | grep VGA");
+#endif
     Debug::log(LOG, "GPU information:\n%s\n", GPUINFO.c_str());
 
     if (GPUINFO.contains("NVIDIA")) {
@@ -466,8 +470,8 @@ int64_t getPPIDof(int64_t pid) {
 
     return 0;
 #else
-    std::string dir = "/proc/" + std::to_string(pid) + "/status";
-    FILE*       infile;
+    std::string       dir     = "/proc/" + std::to_string(pid) + "/status";
+    FILE*             infile;
 
     infile = fopen(dir.c_str(), "r");
     if (!infile)
@@ -549,4 +553,13 @@ double normalizeAngleRad(double ang) {
     }
 
     return ang;
+}
+
+std::string replaceInString(std::string subject, const std::string& search, const std::string& replace) {
+    size_t pos = 0;
+    while ((pos = subject.find(search, pos)) != std::string::npos) {
+        subject.replace(pos, search.length(), replace);
+        pos += replace.length();
+    }
+    return subject;
 }

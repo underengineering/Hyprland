@@ -14,7 +14,8 @@ enum eOrientation : uint8_t
     ORIENTATION_LEFT = 0,
     ORIENTATION_TOP,
     ORIENTATION_RIGHT,
-    ORIENTATION_BOTTOM
+    ORIENTATION_BOTTOM,
+    ORIENTATION_CENTER
 };
 
 struct SMasterNodeData {
@@ -58,6 +59,7 @@ class CHyprMasterLayout : public IHyprLayout {
     virtual void                     switchWindows(CWindow*, CWindow*);
     virtual void                     alterSplitRatio(CWindow*, float, bool);
     virtual std::string              getLayoutName();
+    virtual void                     replaceWindowDataWith(CWindow* from, CWindow* to);
 
     virtual void                     onEnable();
     virtual void                     onDisable();

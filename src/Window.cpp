@@ -88,6 +88,59 @@ wlr_box CWindow::getWindowIdealBoundingBoxIgnoreReserved() {
     return wlr_box{(int)POS.x, (int)POS.y, (int)SIZE.x, (int)SIZE.y};
 }
 
+wlr_box CWindow::getWindowInputBox() {
+    static auto* const PBORDERSIZE = &g_pConfigManager->getConfigValuePtr("general:border_size")->intValue;
+
+    if (m_sAdditionalConfigData.dimAround) {
+        const auto PMONITOR = g_pCompositor->getMonitorFromID(m_iMonitorID);
+        return {PMONITOR->vecPosition.x, PMONITOR->vecPosition.y, PMONITOR->vecSize.x, PMONITOR->vecSize.y};
+    }
+
+    SWindowDecorationExtents maxExtents = {{*PBORDERSIZE + 2, *PBORDERSIZE + 2}, {*PBORDERSIZE + 2, *PBORDERSIZE + 2}};
+
+    for (auto& wd : m_dWindowDecorations) {
+
+        if (!wd->allowsInput())
+            continue;
+
+        const auto EXTENTS = wd->getWindowDecorationExtents();
+
+        if (EXTENTS.topLeft.x > maxExtents.topLeft.x)
+            maxExtents.topLeft.x = EXTENTS.topLeft.x;
+
+        if (EXTENTS.topLeft.y > maxExtents.topLeft.y)
+            maxExtents.topLeft.y = EXTENTS.topLeft.y;
+
+        if (EXTENTS.bottomRight.x > maxExtents.bottomRight.x)
+            maxExtents.bottomRight.x = EXTENTS.bottomRight.x;
+
+        if (EXTENTS.bottomRight.y > maxExtents.bottomRight.y)
+            maxExtents.bottomRight.y = EXTENTS.bottomRight.y;
+    }
+
+    // Add extents to the real base BB and return
+    wlr_box finalBox = {m_vRealPosition.vec().x - maxExtents.topLeft.x, m_vRealPosition.vec().y - maxExtents.topLeft.y,
+                        m_vRealSize.vec().x + maxExtents.topLeft.x + maxExtents.bottomRight.x, m_vRealSize.vec().y + maxExtents.topLeft.y + maxExtents.bottomRight.y};
+
+    return finalBox;
+}
+
+SWindowDecorationExtents CWindow::getFullWindowReservedArea() {
+    SWindowDecorationExtents extents;
+
+    for (auto& wd : m_dWindowDecorations) {
+        const auto RESERVED = wd->getWindowDecorationReservedArea();
+
+        if (RESERVED.bottomRight == Vector2D{} && RESERVED.topLeft == Vector2D{})
+            continue;
+
+        extents.topLeft     = extents.topLeft + RESERVED.topLeft;
+        extents.bottomRight = extents.bottomRight + RESERVED.bottomRight;
+    }
+
+    return extents;
+}
+
 void CWindow::updateWindowDecos() {
     for (auto& wd : m_dWindowDecorations)
         wd->updateWindow(this);
@@ -108,6 +161,10 @@ void CWindow::updateWindowDecos() {
 pid_t CWindow::getPID() {
     pid_t PID = -1;
     if (!m_bIsX11) {
+
+        if (!m_bIsMapped)
+            return -1;
+
         wl_client_get_credentials(wl_resource_get_client(m_uSurface.xdg->resource), &PID, nullptr, nullptr);
     } else {
         PID = m_uSurface.xwayland->pid;
@@ -219,6 +276,7 @@ void CWindow::moveToWorkspace(int workspaceID) {
 
         if (const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(m_iWorkspaceID); PWORKSPACE) {
             g_pEventManager->postEvent(SHyprIPCEvent{"movewindow", getFormat("%x,%s", this, PWORKSPACE->m_szName.c_str())});
+            EMIT_HOOK_EVENT("moveWindow", (std::vector<void*>{this, PWORKSPACE}));
         }
 
         if (const auto PMONITOR = g_pCompositor->getMonitorFromID(m_iMonitorID); PMONITOR)
@@ -296,9 +354,6 @@ void CWindow::onMap() {
     m_fAlpha.registerVar();
     m_cRealShadowColor.registerVar();
     m_fDimPercent.registerVar();
-
-    m_vRealSize.setCallbackOnEnd([&](void* ptr) { g_pHyprOpenGL->onWindowResizeEnd(this); }, false);
-    m_vRealSize.setCallbackOnBegin([&](void* ptr) { g_pHyprOpenGL->onWindowResizeStart(this); }, false);
 
     m_fBorderAngleAnimationProgress.setCallbackOnEnd([&](void* ptr) { onBorderAngleAnimEnd(ptr); }, false);
 
@@ -412,4 +467,152 @@ void CWindow::updateDynamicRules() {
     for (auto& r : WINDOWRULES) {
         applyDynamicRule(r);
     }
+}
+
+// check if the point is "hidden" under a rounded corner of the window
+// it is assumed that the point is within the real window box (m_vRealPosition, m_vRealSize)
+// otherwise behaviour is undefined
+bool CWindow::isInCurvedCorner(double x, double y) {
+    static auto* const ROUNDING   = &g_pConfigManager->getConfigValuePtr("decoration:rounding")->intValue;
+    static auto* const BORDERSIZE = &g_pConfigManager->getConfigValuePtr("general:border_size")->intValue;
+
+    if (BORDERSIZE >= ROUNDING || ROUNDING == 0)
+        return false;
+
+    // (x0, y0), (x0, y1), ... are the center point of rounding at each corner
+    double x0 = m_vRealPosition.vec().x + *ROUNDING;
+    double y0 = m_vRealPosition.vec().y + *ROUNDING;
+    double x1 = m_vRealPosition.vec().x + m_vRealSize.vec().x - *ROUNDING;
+    double y1 = m_vRealPosition.vec().y + m_vRealSize.vec().y - *ROUNDING;
+
+    if (x < x0 && y < y0) {
+        return Vector2D{x0, y0}.distance(Vector2D{x, y}) > (double)*ROUNDING;
+    }
+    if (x > x1 && y < y0) {
+        return Vector2D{x1, y0}.distance(Vector2D{x, y}) > (double)*ROUNDING;
+    }
+    if (x < x0 && y > y1) {
+        return Vector2D{x0, y1}.distance(Vector2D{x, y}) > (double)*ROUNDING;
+    }
+    if (x > x1 && y > y1) {
+        return Vector2D{x1, y1}.distance(Vector2D{x, y}) > (double)*ROUNDING;
+    }
+
+    return false;
+}
+
+void findExtensionForVector2D(wlr_surface* surface, int x, int y, void* data) {
+    const auto DATA = (SExtensionFindingData*)data;
+
+    wlr_box    box = {DATA->origin.x + x, DATA->origin.y + y, surface->current.width, surface->current.height};
+
+    if (wlr_box_contains_point(&box, DATA->vec.x, DATA->vec.y))
+        *DATA->found = surface;
+}
+
+// checks if the wayland window has a popup at pos
+bool CWindow::hasPopupAt(const Vector2D& pos) {
+    if (m_bIsX11)
+        return false;
+
+    wlr_surface*          resultSurf = nullptr;
+    Vector2D              origin     = m_vRealPosition.vec();
+    SExtensionFindingData data       = {origin, pos, &resultSurf};
+    wlr_xdg_surface_for_each_popup_surface(m_uSurface.xdg, findExtensionForVector2D, &data);
+
+    return resultSurf;
+}
+
+CWindow* CWindow::getGroupHead() {
+    CWindow* curr = this;
+    while (!curr->m_sGroupData.head)
+        curr = curr->m_sGroupData.pNextWindow;
+    return curr;
+}
+
+CWindow* CWindow::getGroupTail() {
+    CWindow* curr = this;
+    while (!curr->m_sGroupData.pNextWindow->m_sGroupData.head)
+        curr = curr->m_sGroupData.pNextWindow;
+    return curr;
+}
+
+CWindow* CWindow::getGroupCurrent() {
+    CWindow* curr = this;
+    while (curr->isHidden())
+        curr = curr->m_sGroupData.pNextWindow;
+    return curr;
+}
+
+void CWindow::setGroupCurrent(CWindow* pWindow) {
+    CWindow* curr     = this->m_sGroupData.pNextWindow;
+    bool     isMember = false;
+    while (curr != this) {
+        if (curr == pWindow) {
+            isMember = true;
+            break;
+        }
+        curr = curr->m_sGroupData.pNextWindow;
+    }
+
+    if (!isMember && pWindow != this)
+        return;
+
+    const auto PCURRENT   = getGroupCurrent();
+    const bool FULLSCREEN = PCURRENT->m_bIsFullscreen;
+    const auto WORKSPACE  = g_pCompositor->getWorkspaceByID(PCURRENT->m_iWorkspaceID);
+
+    const auto PWINDOWSIZE = PCURRENT->m_vRealSize.goalv();
+    const auto PWINDOWPOS  = PCURRENT->m_vRealPosition.goalv();
+
+    const auto CURRENTISFOCUS = PCURRENT == g_pCompositor->m_pLastWindow;
+
+    if (FULLSCREEN)
+        g_pCompositor->setWindowFullscreen(PCURRENT, false, WORKSPACE->m_efFullscreenMode);
+
+    PCURRENT->setHidden(true);
+    pWindow->setHidden(false);
+
+    g_pLayoutManager->getCurrentLayout()->replaceWindowDataWith(PCURRENT, pWindow);
+
+    if (PCURRENT->m_bIsFloating) {
+        pWindow->m_vRealPosition.setValueAndWarp(PWINDOWPOS);
+        pWindow->m_vRealSize.setValueAndWarp(PWINDOWSIZE);
+    }
+
+    g_pCompositor->updateAllWindowsAnimatedDecorationValues();
+
+    if (CURRENTISFOCUS)
+        g_pCompositor->focusWindow(pWindow);
+
+    if (FULLSCREEN)
+        g_pCompositor->setWindowFullscreen(pWindow, true, WORKSPACE->m_efFullscreenMode);
+}
+
+void CWindow::insertWindowToGroup(CWindow* pWindow) {
+    const auto PHEAD = getGroupHead();
+    const auto PTAIL = getGroupTail();
+
+    if (pWindow->m_sGroupData.pNextWindow) {
+        std::vector<CWindow*> members;
+        CWindow*              curr = pWindow;
+        do {
+            const auto PLAST = curr;
+            members.push_back(curr);
+            curr                            = curr->m_sGroupData.pNextWindow;
+            PLAST->m_sGroupData.pNextWindow = nullptr;
+            PLAST->m_sGroupData.head        = false;
+        } while (curr != pWindow);
+
+        for (auto& w : members) {
+            insertWindowToGroup(w);
+        }
+
+        return;
+    }
+
+    PTAIL->m_sGroupData.pNextWindow   = pWindow;
+    pWindow->m_sGroupData.pNextWindow = PHEAD;
+
+    setGroupCurrent(pWindow);
 }

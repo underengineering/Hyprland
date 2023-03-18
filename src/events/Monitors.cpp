@@ -20,6 +20,9 @@ void Events::listener_change(wl_listener* listener, void* data) {
     const auto CONFIG = wlr_output_configuration_v1_create();
 
     for (auto& m : g_pCompositor->m_vMonitors) {
+        if (!m->output)
+            continue;
+
         const auto CONFIGHEAD = wlr_output_configuration_head_v1_create(CONFIG, m->output);
 
         // TODO: clients off of disabled
@@ -106,6 +109,10 @@ void Events::listener_monitorFrame(void* owner, void* data) {
 
     if ((g_pCompositor->m_sWLRSession && !g_pCompositor->m_sWLRSession->active) || !g_pCompositor->m_bSessionActive || g_pCompositor->m_bUnsafeState) {
         Debug::log(WARN, "Attempted to render frame on inactive session!");
+
+        if (g_pCompositor->m_bUnsafeState)
+            g_pConfigManager->performMonitorReload();
+
         return; // cannot draw on session inactive (different tty)
     }
 
@@ -151,7 +158,6 @@ void Events::listener_monitorFrame(void* owner, void* data) {
     if (PMONITOR->ID == g_pHyprRenderer->m_pMostHzMonitor->ID ||
         *PVFR == 1) { // unfortunately with VFR we don't have the guarantee mostHz is going to be updated all the time, so we have to ignore that
         g_pCompositor->sanityCheckWorkspaces();
-        g_pAnimationManager->tick();
 
         g_pConfigManager->dispatchExecOnce(); // We exec-once when at least one monitor starts refreshing, meaning stuff has init'd
 
@@ -177,7 +183,7 @@ void Events::listener_monitorFrame(void* owner, void* data) {
         }
     }
 
-    g_pProtocolManager->m_pToplevelExportProtocolManager->onMonitorRender(PMONITOR); // dispatch any toplevel sharing
+    EMIT_HOOK_EVENT("preRender", PMONITOR);
 
     timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
@@ -192,12 +198,12 @@ void Events::listener_monitorFrame(void* owner, void* data) {
         return;
     }
 
-    g_pHyprOpenGL->preRender(PMONITOR);
-
     if (!wlr_output_damage_attach_render(PMONITOR->damage, &hasChanged, &damage)) {
         Debug::log(ERR, "Couldn't attach render to display %s ???", PMONITOR->szName.c_str());
         return;
     }
+
+    PMONITOR->renderingActive = true;
 
     // we need to cleanup fading out when rendering the appropriate context
     g_pCompositor->cleanupFadingOut(PMONITOR->ID);
@@ -208,6 +214,8 @@ void Events::listener_monitorFrame(void* owner, void* data) {
 
         if (*PDAMAGEBLINK || *PVFR == 0)
             g_pCompositor->scheduleFrameForMonitor(PMONITOR);
+
+        PMONITOR->renderingActive = false;
 
         return;
     }
@@ -258,9 +266,10 @@ void Events::listener_monitorFrame(void* owner, void* data) {
 
         g_pHyprRenderer->renderAllClientsForMonitor(PMONITOR->ID, &now);
 
-        // if correct monitor draw hyprerror
-        if (PMONITOR == g_pCompositor->m_vMonitors.front().get())
+        if (PMONITOR == g_pCompositor->m_pLastMonitor) {
+            g_pHyprNotificationOverlay->draw(PMONITOR);
             g_pHyprError->draw();
+        }
 
         // for drawing the debug overlay
         if (PMONITOR == g_pCompositor->m_vMonitors.front().get() && *PDEBUGOVERLAY == 1) {
@@ -308,11 +317,15 @@ void Events::listener_monitorFrame(void* owner, void* data) {
     pixman_region32_fini(&frameDamage);
     pixman_region32_fini(&damage);
 
+    PMONITOR->renderingActive = false;
+
     if (!wlr_output_commit(PMONITOR->output))
         return;
 
-    if (*PDAMAGEBLINK || *PVFR == 0)
+    if (*PDAMAGEBLINK || *PVFR == 0 || PMONITOR->pendingFrame)
         g_pCompositor->scheduleFrameForMonitor(PMONITOR);
+
+    PMONITOR->pendingFrame = false;
 
     if (*PDEBUGOVERLAY == 1) {
         const float µs = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - startRender).count() / 1000.f;
@@ -345,9 +358,12 @@ void Events::listener_monitorDestroy(void* owner, void* data) {
 
     pMonitor->onDisconnect();
 
+    pMonitor->output                 = nullptr;
+    pMonitor->m_bRenderingInitPassed = false;
+
     // cleanup if not unsafe
     if (!g_pCompositor->m_bUnsafeState) {
-        Debug::log(LOG, "Removing monitor %s from realMonitors", pMonitor->output->name);
+        Debug::log(LOG, "Removing monitor %s from realMonitors", pMonitor->szName.c_str());
 
         std::erase_if(g_pCompositor->m_vRealMonitors, [&](std::shared_ptr<CMonitor>& el) { return el.get() == pMonitor; });
     }

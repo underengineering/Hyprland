@@ -1,6 +1,7 @@
 #include "InputManager.hpp"
 #include "../../Compositor.hpp"
 #include "wlr/types/wlr_switch.h"
+#include <ranges>
 
 void CInputManager::onMouseMoved(wlr_pointer_motion_event* e) {
     static auto* const PSENS      = &g_pConfigManager->getConfigValuePtr("general:sensitivity")->floatValue;
@@ -45,12 +46,17 @@ void CInputManager::simulateMouseMovement() {
 }
 
 void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
-    static auto* const PFOLLOWMOUSE   = &g_pConfigManager->getConfigValuePtr("input:follow_mouse")->intValue;
-    static auto* const PMOUSEDPMS     = &g_pConfigManager->getConfigValuePtr("misc:mouse_move_enables_dpms")->intValue;
-    static auto* const PFOLLOWONDND   = &g_pConfigManager->getConfigValuePtr("misc:always_follow_on_dnd")->intValue;
-    static auto* const PHOGFOCUS      = &g_pConfigManager->getConfigValuePtr("misc:layers_hog_keyboard_focus")->intValue;
-    static auto* const PFLOATBEHAVIOR = &g_pConfigManager->getConfigValuePtr("input:float_switch_override_focus")->intValue;
-    static auto* const PMOUSEFOCUSMON = &g_pConfigManager->getConfigValuePtr("misc:mouse_move_focuses_monitor")->intValue;
+    static auto* const PFOLLOWMOUSE      = &g_pConfigManager->getConfigValuePtr("input:follow_mouse")->intValue;
+    static auto* const PMOUSEDPMS        = &g_pConfigManager->getConfigValuePtr("misc:mouse_move_enables_dpms")->intValue;
+    static auto* const PFOLLOWONDND      = &g_pConfigManager->getConfigValuePtr("misc:always_follow_on_dnd")->intValue;
+    static auto* const PHOGFOCUS         = &g_pConfigManager->getConfigValuePtr("misc:layers_hog_keyboard_focus")->intValue;
+    static auto* const PFLOATBEHAVIOR    = &g_pConfigManager->getConfigValuePtr("input:float_switch_override_focus")->intValue;
+    static auto* const PMOUSEFOCUSMON    = &g_pConfigManager->getConfigValuePtr("misc:mouse_move_focuses_monitor")->intValue;
+    static auto* const PRESIZEONBORDER   = &g_pConfigManager->getConfigValuePtr("general:resize_on_border")->intValue;
+    static auto* const PBORDERSIZE       = &g_pConfigManager->getConfigValuePtr("general:border_size")->intValue;
+    static auto* const PBORDERGRABEXTEND = &g_pConfigManager->getConfigValuePtr("general:extend_border_grab_area")->intValue;
+    static auto* const PRESIZECURSORICON = &g_pConfigManager->getConfigValuePtr("general:hover_icon_on_border")->intValue;
+    const auto         BORDER_GRAB_AREA  = *PRESIZEONBORDER ? *PBORDERSIZE + *PBORDERGRABEXTEND : 0;
 
     m_pFoundSurfaceToFocus      = nullptr;
     m_pFoundLSToFocus           = nullptr;
@@ -64,11 +70,6 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
     if (!g_pCompositor->m_bReadyToProcess || g_pCompositor->m_bIsShuttingDown)
         return;
 
-    if (!g_pCompositor->m_sSeat.mouse) {
-        Debug::log(ERR, "BUG THIS: Mouse move on mouse nullptr!");
-        return;
-    }
-
     if (!g_pCompositor->m_bDPMSStateON && *PMOUSEDPMS) {
         // enable dpms
         g_pKeybindManager->dpms("on");
@@ -80,13 +81,15 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
     if (MOUSECOORDSFLOORED == m_vLastCursorPosFloored && !refocus)
         return;
 
+    EMIT_HOOK_EVENT("mouseMove", MOUSECOORDSFLOORED);
+
     m_vLastCursorPosFloored = MOUSECOORDSFLOORED;
 
     const auto PMONITOR = g_pCompositor->getMonitorFromCursor();
 
     // constraints
     // All constraints TODO: multiple mice?
-    if (g_pCompositor->m_sSeat.mouse->currentConstraint && !g_pCompositor->m_sSeat.exclusiveClient && !g_pSessionLockManager->isSessionLocked()) {
+    if (g_pCompositor->m_sSeat.mouse && g_pCompositor->m_sSeat.mouse->currentConstraint && !g_pCompositor->m_sSeat.exclusiveClient && !g_pSessionLockManager->isSessionLocked()) {
         // XWayland windows sometimes issue constraints weirdly.
         // TODO: We probably should search their parent. wlr_xwayland_surface->parent
         const auto CONSTRAINTWINDOW = g_pCompositor->getConstraintWindow(g_pCompositor->m_sSeat.mouse);
@@ -107,7 +110,8 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
 
                 Vector2D hint = {PCONSTRAINT->positionHint.x, PCONSTRAINT->positionHint.y};
 
-                wlr_cursor_warp_closest(g_pCompositor->m_sWLRCursor, g_pCompositor->m_sSeat.mouse->mouse, CONSTRAINTPOS.x + hint.x, CONSTRAINTPOS.y + hint.y);
+                if (hint != Vector2D{-1, -1})
+                    wlr_cursor_warp_closest(g_pCompositor->m_sWLRCursor, g_pCompositor->m_sSeat.mouse->mouse, CONSTRAINTPOS.x + hint.x, CONSTRAINTPOS.y + hint.y);
 
                 return; // don't process anything else, the cursor is locked. The surface should not receive any further events.
                         // these are usually FPS games. They will use the relative motion.
@@ -179,12 +183,13 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
         }
 
         // only check floating because tiled cant be over fullscreen
-        for (auto w = g_pCompositor->m_vWindows.rbegin(); w != g_pCompositor->m_vWindows.rend(); w++) {
-            wlr_box box = {(*w)->m_vRealPosition.vec().x, (*w)->m_vRealPosition.vec().y, (*w)->m_vRealSize.vec().x, (*w)->m_vRealSize.vec().y};
-            if ((((*w)->m_bIsFloating && (*w)->m_bIsMapped && ((*w)->m_bCreatedOverFullscreen || (*w)->m_bPinned)) ||
-                 (g_pCompositor->isWorkspaceSpecial((*w)->m_iWorkspaceID) && PMONITOR->specialWorkspaceID)) &&
-                wlr_box_contains_point(&box, mouseCoords.x, mouseCoords.y) && g_pCompositor->isWorkspaceVisible((*w)->m_iWorkspaceID) && !(*w)->isHidden()) {
-                pFoundWindow = (*w).get();
+        for (auto& w : g_pCompositor->m_vWindows | std::views::reverse) {
+            wlr_box box = {w->m_vRealPosition.vec().x - BORDER_GRAB_AREA, w->m_vRealPosition.vec().y - BORDER_GRAB_AREA, w->m_vRealSize.vec().x + 2 * BORDER_GRAB_AREA,
+                           w->m_vRealSize.vec().y + 2 * BORDER_GRAB_AREA};
+            if (((w->m_bIsFloating && w->m_bIsMapped && (w->m_bCreatedOverFullscreen || w->m_bPinned)) ||
+                 (g_pCompositor->isWorkspaceSpecial(w->m_iWorkspaceID) && PMONITOR->specialWorkspaceID)) &&
+                wlr_box_contains_point(&box, mouseCoords.x, mouseCoords.y) && g_pCompositor->isWorkspaceVisible(w->m_iWorkspaceID) && !w->isHidden()) {
+                pFoundWindow = w.get();
                 break;
             }
         }
@@ -245,6 +250,7 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
 
     if (!foundSurface) {
         if (!m_bEmptyFocusCursorSet) {
+            m_eBorderIconDirection = BORDERICON_NONE;
             if (g_pHyprRenderer->m_bHasARenderedCursor) {
                 // TODO: maybe wrap?
                 if (m_ecbClickBehavior == CLICKMODE_KILL)
@@ -298,6 +304,23 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
     }
 
     if (pFoundWindow) {
+        // change cursor icon if hovering over border
+        if (*PRESIZEONBORDER && *PRESIZECURSORICON && !pFoundWindow->m_bIsFullscreen && !pFoundWindow->hasPopupAt(mouseCoords)) {
+            setCursorIconOnBorder(pFoundWindow);
+        }
+
+        // if we're on an input deco, reset cursor. Don't on overriden
+        // if (!m_bCursorImageOverriden) {
+        //     if (!VECINRECT(m_vLastCursorPosFloored, pFoundWindow->m_vRealPosition.vec().x, pFoundWindow->m_vRealPosition.vec().y,
+        //                    pFoundWindow->m_vRealPosition.vec().x + pFoundWindow->m_vRealSize.vec().x, pFoundWindow->m_vRealPosition.vec().y + pFoundWindow->m_vRealSize.vec().y)) {
+        //         wlr_xcursor_manager_set_cursor_image(g_pCompositor->m_sWLRXCursorMgr, "left_ptr", g_pCompositor->m_sWLRCursor);
+        //         cursorSurfaceInfo.bUsed = false;
+        //     } else if (!cursorSurfaceInfo.bUsed) {
+        //         cursorSurfaceInfo.bUsed = true;
+        //         wlr_cursor_set_surface(g_pCompositor->m_sWLRCursor, cursorSurfaceInfo.pSurface, cursorSurfaceInfo.vHotspot.x, cursorSurfaceInfo.vHotspot.y);
+        //     }
+        // }
+
         if (*PFOLLOWMOUSE != 1 && !refocus) {
             if (pFoundWindow != g_pCompositor->m_pLastWindow && g_pCompositor->m_pLastWindow &&
                 ((pFoundWindow->m_bIsFloating && *PFLOATBEHAVIOR == 2) || (g_pCompositor->m_pLastWindow->m_bIsFloating != pFoundWindow->m_bIsFloating && *PFLOATBEHAVIOR != 0))) {
@@ -332,6 +355,11 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
 
         m_bLastFocusOnLS = false;
     } else {
+        if (*PRESIZEONBORDER && *PRESIZECURSORICON && m_eBorderIconDirection != BORDERICON_NONE) {
+            m_eBorderIconDirection = BORDERICON_NONE;
+            unsetCursorImage();
+        }
+
         if (pFoundLayerSurface && pFoundLayerSurface->layerSurface->current.keyboard_interactive && *PFOLLOWMOUSE != 3 && allowKeyboardRefocus) {
             g_pCompositor->focusSurface(foundSurface);
         }
@@ -346,6 +374,8 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
 
 void CInputManager::onMouseButton(wlr_pointer_button_event* e) {
     wlr_idle_notify_activity(g_pCompositor->m_sWLRIdle, g_pCompositor->m_sSeat.seat);
+
+    EMIT_HOOK_EVENT("mouseButton", e);
 
     m_tmrLastCursorMovement.reset();
 
@@ -383,6 +413,15 @@ void CInputManager::processMouseRequest(wlr_seat_pointer_request_set_cursor_even
         return;
     }
 
+    // cursorSurfaceInfo.pSurface = e->surface;
+
+    // if (e->surface) {
+    //     hyprListener_CursorSurfaceDestroy.removeCallback();
+    //     hyprListener_CursorSurfaceDestroy.initCallback(
+    //         &e->surface->events.destroy, [&](void* owner, void* data) { cursorSurfaceInfo.pSurface = nullptr; }, this, "InputManager");
+    //     cursorSurfaceInfo.vHotspot = {e->hotspot_x, e->hotspot_y};
+    // }
+
     if (e->seat_client == g_pCompositor->m_sSeat.seat->pointer_state.focused_client)
         wlr_cursor_set_surface(g_pCompositor->m_sWLRCursor, e->surface, e->hotspot_x, e->hotspot_y);
 }
@@ -417,19 +456,34 @@ void CInputManager::setClickMode(eClickBehaviorMode mode) {
 void CInputManager::processMouseDownNormal(wlr_pointer_button_event* e) {
 
     // notify the keybind manager
-    static auto* const PPASSMOUSE   = &g_pConfigManager->getConfigValuePtr("binds:pass_mouse_when_bound")->intValue;
-    const auto         PASS         = g_pKeybindManager->onMouseEvent(e);
-    static auto* const PFOLLOWMOUSE = &g_pConfigManager->getConfigValuePtr("input:follow_mouse")->intValue;
+    static auto* const PPASSMOUSE      = &g_pConfigManager->getConfigValuePtr("binds:pass_mouse_when_bound")->intValue;
+    const auto         PASS            = g_pKeybindManager->onMouseEvent(e);
+    static auto* const PFOLLOWMOUSE    = &g_pConfigManager->getConfigValuePtr("input:follow_mouse")->intValue;
+    static auto* const PRESIZEONBORDER = &g_pConfigManager->getConfigValuePtr("general:resize_on_border")->intValue;
 
     if (!PASS && !*PPASSMOUSE)
         return;
+
+    // clicking on border triggers resize
+    // TODO detect click on LS properly
+    if (*PRESIZEONBORDER && !m_bLastFocusOnLS) {
+        const auto mouseCoords = g_pInputManager->getMouseCoordsInternal();
+        const auto w           = g_pCompositor->vectorToWindowIdeal(mouseCoords);
+        if (w && !w->m_bIsFullscreen) {
+            const wlr_box real = {w->m_vRealPosition.vec().x, w->m_vRealPosition.vec().y, w->m_vRealSize.vec().x, w->m_vRealSize.vec().y};
+            if ((!wlr_box_contains_point(&real, mouseCoords.x, mouseCoords.y) || w->isInCurvedCorner(mouseCoords.x, mouseCoords.y)) && !w->hasPopupAt(mouseCoords)) {
+                g_pKeybindManager->resizeWithBorder(e);
+                return;
+            }
+        }
+    }
 
     switch (e->state) {
         case WLR_BUTTON_PRESSED:
             if (*PFOLLOWMOUSE == 3) // don't refocus on full loose
                 break;
 
-            if (!g_pCompositor->m_sSeat.mouse->currentConstraint)
+            if (!g_pCompositor->m_sSeat.mouse || !g_pCompositor->m_sSeat.mouse->currentConstraint)
                 refocus();
 
             // if clicked on a floating window make it top
@@ -505,8 +559,10 @@ void CInputManager::newKeyboard(wlr_input_device* keyboard) {
         &wlr_keyboard_from_input_device(keyboard)->events.keymap,
         [&](void* owner, void* data) {
             const auto PKEYBOARD = (SKeyboard*)owner;
+            const auto LAYOUT    = getActiveLayoutForKeyboard(PKEYBOARD);
 
-            g_pEventManager->postEvent(SHyprIPCEvent{"activelayout", PKEYBOARD->name + "," + getActiveLayoutForKeyboard(PKEYBOARD)}, true); // force as this should ALWAYS be sent
+            g_pEventManager->postEvent(SHyprIPCEvent{"activelayout", PKEYBOARD->name + "," + LAYOUT}, true); // force as this should ALWAYS be sent
+            EMIT_HOOK_EVENT("activeLayout", (std::vector<void*>{PKEYBOARD, (void*)&LAYOUT}));
         },
         PNEWKEYBOARD, "Keyboard");
 
@@ -542,8 +598,10 @@ void CInputManager::newVirtualKeyboard(wlr_input_device* keyboard) {
         &wlr_keyboard_from_input_device(keyboard)->events.keymap,
         [&](void* owner, void* data) {
             const auto PKEYBOARD = (SKeyboard*)owner;
+            const auto LAYOUT    = getActiveLayoutForKeyboard(PKEYBOARD);
 
-            g_pEventManager->postEvent(SHyprIPCEvent{"activelayout", PKEYBOARD->name + "," + getActiveLayoutForKeyboard(PKEYBOARD)}, true); // force as this should ALWAYS be sent
+            g_pEventManager->postEvent(SHyprIPCEvent{"activelayout", PKEYBOARD->name + "," + LAYOUT}, true); // force as this should ALWAYS be sent
+            EMIT_HOOK_EVENT("activeLayout", (std::vector<void*>{PKEYBOARD, (void*)&LAYOUT}));
         },
         PNEWKEYBOARD, "Keyboard");
 
@@ -684,7 +742,10 @@ void CInputManager::applyConfigToKeyboard(SKeyboard* pKeyboard) {
     xkb_keymap_unref(KEYMAP);
     xkb_context_unref(CONTEXT);
 
-    g_pEventManager->postEvent(SHyprIPCEvent{"activelayout", pKeyboard->name + "," + getActiveLayoutForKeyboard(pKeyboard)}, true); // force as this should ALWAYS be sent
+    const auto LAYOUTSTR = getActiveLayoutForKeyboard(pKeyboard);
+
+    g_pEventManager->postEvent(SHyprIPCEvent{"activelayout", pKeyboard->name + "," + LAYOUTSTR}, true); // force as this should ALWAYS be sent
+    EMIT_HOOK_EVENT("activeLayout", (std::vector<void*>{pKeyboard, (void*)&LAYOUTSTR}));
 
     Debug::log(LOG, "Set the keyboard layout to %s and variant to %s for keyboard \"%s\"", rules.layout, rules.variant, pKeyboard->keyboard->name);
 }
@@ -902,6 +963,12 @@ void CInputManager::onKeyboardKey(wlr_keyboard_key_event* e, SKeyboard* pKeyboar
     if (!pKeyboard->enabled)
         return;
 
+    static auto* const PDPMS = &g_pConfigManager->getConfigValuePtr("misc:key_press_enables_dpms")->intValue;
+    if (*PDPMS && !g_pCompositor->m_bDPMSStateON) {
+        // enable dpms
+        g_pKeybindManager->dpms("on");
+    }
+
     bool passEvent = g_pKeybindManager->onKeyEvent(e, pKeyboard);
 
     wlr_idle_notify_activity(g_pCompositor->m_sWLRIdle, g_pCompositor->m_sSeat.seat);
@@ -948,7 +1015,10 @@ void CInputManager::onKeyboardMod(void* data, SKeyboard* pKeyboard) {
     if (PWLRKB->modifiers.group != pKeyboard->activeLayout) {
         pKeyboard->activeLayout = PWLRKB->modifiers.group;
 
-        g_pEventManager->postEvent(SHyprIPCEvent{"activelayout", pKeyboard->name + "," + getActiveLayoutForKeyboard(pKeyboard)}, true); // force as this should ALWAYS be sent
+        const auto LAYOUT = getActiveLayoutForKeyboard(pKeyboard);
+
+        g_pEventManager->postEvent(SHyprIPCEvent{"activelayout", pKeyboard->name + "," + LAYOUT}, true); // force as this should ALWAYS be sent
+        EMIT_HOOK_EVENT("activeLayout", (std::vector<void*>{pKeyboard, (void*)&LAYOUT}));
     }
 }
 
@@ -989,12 +1059,6 @@ void CInputManager::recheckConstraint(SMouse* pMouse) {
     } else {
         pixman_region32_clear(&pMouse->confinedTo);
     }
-
-    const auto PWINDOW     = g_pCompositor->getConstraintWindow(g_pCompositor->m_sSeat.mouse);
-    const auto PWINDOWNAME = PWINDOW ? PWINDOW->m_szTitle : "";
-
-    Debug::log(LOG, "Constraint rechecked: %i, %i to %i, %i for %x (window name: %s)", PREGION->extents.x1, PREGION->extents.y1, PREGION->extents.x2, PREGION->extents.y2,
-               pMouse->currentConstraint->surface, PWINDOWNAME.c_str());
 }
 
 void CInputManager::constrainMouse(SMouse* pMouse, wlr_pointer_constraint_v1* constraint) {
@@ -1057,7 +1121,7 @@ void CInputManager::constrainMouse(SMouse* pMouse, wlr_pointer_constraint_v1* co
 }
 
 void CInputManager::unconstrainMouse() {
-    if (!g_pCompositor->m_sSeat.mouse->currentConstraint)
+    if (!g_pCompositor->m_sSeat.mouse || !g_pCompositor->m_sSeat.mouse->currentConstraint)
         return;
 
     const auto CONSTRAINTWINDOW = g_pCompositor->getConstraintWindow(g_pCompositor->m_sSeat.mouse);
@@ -1243,13 +1307,16 @@ void CInputManager::newSwitch(wlr_input_device* pDevice) {
         [&](void* owner, void* data) {
             const auto PDEVICE = (SSwitchDevice*)owner;
             const auto NAME    = std::string(PDEVICE->pWlrDevice->name);
+            const auto E       = (wlr_switch_toggle_event*)data;
+
+            if (PDEVICE->status != -1 && PDEVICE->status == E->switch_state)
+                return;
 
             Debug::log(LOG, "Switch %s fired, triggering binds.", NAME.c_str());
 
             g_pKeybindManager->onSwitchEvent(NAME);
 
-            const auto event_data = (wlr_switch_toggle_event*)data;
-            switch (event_data->switch_state) {
+            switch (E->switch_state) {
                 case WLR_SWITCH_STATE_ON:
                     Debug::log(LOG, "Switch %s turn on, triggering binds.", NAME.c_str());
                     g_pKeybindManager->onSwitchOnEvent(NAME);
@@ -1259,6 +1326,8 @@ void CInputManager::newSwitch(wlr_input_device* pDevice) {
                     g_pKeybindManager->onSwitchOffEvent(NAME);
                     break;
             }
+
+            PDEVICE->status = E->switch_state;
         },
         PNEWDEV, "SwitchDevice");
 }
@@ -1339,4 +1408,75 @@ void CInputManager::releaseAllMouseButtons() {
     }
 
     m_lCurrentlyHeldButtons.clear();
+}
+
+void CInputManager::setCursorIconOnBorder(CWindow* w) {
+    // do not override cursor icons set by mouse binds
+    if (g_pKeybindManager->m_bIsMouseBindActive) {
+        m_eBorderIconDirection = BORDERICON_NONE;
+        return;
+    }
+
+    static auto* const PROUNDING   = &g_pConfigManager->getConfigValuePtr("decoration:rounding")->intValue;
+    static const auto* PBORDERSIZE = &g_pConfigManager->getConfigValuePtr("general:border_size")->intValue;
+    // give a small leeway (10 px) for corner icon
+    const auto           CORNER      = *PROUNDING + *PBORDERSIZE + 10;
+    const auto           mouseCoords = getMouseCoordsInternal();
+    wlr_box              box         = {w->m_vRealPosition.vec().x, w->m_vRealPosition.vec().y, w->m_vRealSize.vec().x, w->m_vRealSize.vec().y};
+    eBorderIconDirection direction   = BORDERICON_NONE;
+    if (wlr_box_contains_point(&box, mouseCoords.x, mouseCoords.y)) {
+        if (!w->isInCurvedCorner(mouseCoords.x, mouseCoords.y)) {
+            direction = BORDERICON_NONE;
+        } else {
+            if (mouseCoords.y < box.y + CORNER) {
+                if (mouseCoords.x < box.x + CORNER)
+                    direction = BORDERICON_UP_LEFT;
+                else
+                    direction = BORDERICON_UP_RIGHT;
+            } else {
+                if (mouseCoords.x < box.x + CORNER)
+                    direction = BORDERICON_DOWN_LEFT;
+                else
+                    direction = BORDERICON_DOWN_RIGHT;
+            }
+        }
+    } else {
+        if (mouseCoords.y < box.y + CORNER) {
+            if (mouseCoords.x < box.x + CORNER)
+                direction = BORDERICON_UP_LEFT;
+            else if (mouseCoords.x > box.x + box.width - CORNER)
+                direction = BORDERICON_UP_RIGHT;
+            else
+                direction = BORDERICON_UP;
+        } else if (mouseCoords.y > box.y + box.height - CORNER) {
+            if (mouseCoords.x < box.x + CORNER)
+                direction = BORDERICON_DOWN_LEFT;
+            else if (mouseCoords.x > box.x + box.width - CORNER)
+                direction = BORDERICON_DOWN_RIGHT;
+            else
+                direction = BORDERICON_DOWN;
+        } else {
+            if (mouseCoords.x < box.x + CORNER)
+                direction = BORDERICON_LEFT;
+            else if (mouseCoords.x > box.x + box.width - CORNER)
+                direction = BORDERICON_RIGHT;
+        }
+    }
+
+    if (direction == m_eBorderIconDirection)
+        return;
+
+    m_eBorderIconDirection = direction;
+
+    switch (direction) {
+        case BORDERICON_NONE: unsetCursorImage(); break;
+        case BORDERICON_UP: setCursorImageUntilUnset("top_side"); break;
+        case BORDERICON_DOWN: setCursorImageUntilUnset("bottom_side"); break;
+        case BORDERICON_LEFT: setCursorImageUntilUnset("left_side"); break;
+        case BORDERICON_RIGHT: setCursorImageUntilUnset("right_side"); break;
+        case BORDERICON_UP_LEFT: setCursorImageUntilUnset("top_left_corner"); break;
+        case BORDERICON_DOWN_LEFT: setCursorImageUntilUnset("bottom_left_corner"); break;
+        case BORDERICON_UP_RIGHT: setCursorImageUntilUnset("top_right_corner"); break;
+        case BORDERICON_DOWN_RIGHT: setCursorImageUntilUnset("bottom_right_corner"); break;
+    }
 }

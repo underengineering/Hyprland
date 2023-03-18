@@ -15,6 +15,7 @@ class CShader {
     GLint  posAttrib;
     GLint  texAttrib;
     GLint  discardOpaque;
+    GLint  discardAlphaZero;
 
     GLint  topLeft;
     GLint  bottomRight;
@@ -36,6 +37,8 @@ class CShader {
     GLint  gradient;
     GLint  gradientLength;
     GLint  angle;
+
+    GLint  time;
 
     GLint  getUniformLocation(const std::string&);
 

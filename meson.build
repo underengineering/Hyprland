@@ -43,22 +43,27 @@ wlroots = subproject('wlroots', default_options: ['examples=false'])
 have_xwlr = wlroots.get_variable('features').get('xwayland')
 xcb_dep = dependency('xcb', required: get_option('xwayland'))
 
+cmake = import('cmake')
+udis = cmake.subproject('udis86')
+udis86 = udis.dependency('libudis86')
+
 if get_option('xwayland').enabled() and not have_xwlr
 	error('Cannot enable Xwayland in Hyprland: wlroots has been built without Xwayland support')
 endif
 have_xwayland = xcb_dep.found() and have_xwlr
 
 if not have_xwayland
-add_project_arguments('-DNO_XWAYLAND', language: 'cpp')
+  add_project_arguments('-DNO_XWAYLAND', language: 'cpp')
 endif
 
+backtrace_dep = cpp_compiler.find_library('execinfo', required: false)
 systemd_dep = dependency('libsystemd', required: get_option('systemd'))
 
 if get_option('systemd').enabled() 
   if systemd_dep.found()
-        add_project_arguments('-DUSES_SYSTEMD', language: 'cpp')
+    add_project_arguments('-DUSES_SYSTEMD', language: 'cpp')
   else 
-	error('Cannot enable systemd in Hyprland: libsystemd was not found')
+  	error('Cannot enable systemd in Hyprland: libsystemd was not found')
   endif
 endif
 

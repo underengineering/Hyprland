@@ -28,6 +28,9 @@ monitor=,preferred,auto,auto
 # Source a file (multi-file configs)
 # source = ~/.config/hypr/myColors.conf
 
+# Some default env vars.
+env = XCURSOR_SIZE,24
+
 # For all categories, see https://wiki.hyprland.org/Configuring/Variables/
 input {
     kb_layout = us
@@ -105,7 +108,7 @@ gestures {
 
 # Example per-device config
 # See https://wiki.hyprland.org/Configuring/Keywords/#executing for more
-device:epic mouse V1 {
+device:epic-mouse-v1 {
     sensitivity = -0.5
 }
 

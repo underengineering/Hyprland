@@ -15,6 +15,8 @@ struct SLayerRule {
 struct SLayerSurface {
     SLayerSurface();
 
+    void                  applyRules();
+
     wlr_layer_surface_v1* layerSurface;
     wl_list               link;
 
@@ -40,7 +42,8 @@ struct SLayerSurface {
     bool                      noProcess     = false;
     bool                      noAnimations  = false;
 
-    bool                      forceBlur = false;
+    bool                      forceBlur  = false;
+    bool                      ignoreZero = false;
 
     // For the list lookup
     bool operator==(const SLayerSurface& rhs) const {
@@ -297,8 +300,11 @@ struct SSwipeGesture {
     CMonitor*   pMonitor = nullptr;
 };
 
+struct STextInputV1;
+
 struct STextInput {
     wlr_text_input_v3* pWlrInput = nullptr;
+    STextInputV1*      pV1Input  = nullptr;
 
     wlr_surface*       pPendingSurface = nullptr;
 
@@ -354,6 +360,8 @@ struct STouchDevice {
 
 struct SSwitchDevice {
     wlr_input_device* pWlrDevice = nullptr;
+
+    int               status = -1; // uninitialized
 
     DYNLISTENER(destroy);
     DYNLISTENER(toggle);

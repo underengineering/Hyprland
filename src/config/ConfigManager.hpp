@@ -21,6 +21,8 @@
 #define INITANIMCFG(name)           animationConfig[name] = {}
 #define CREATEANIMCFG(name, parent) animationConfig[name] = {false, "", "", 0.f, -1, &animationConfig["global"], &animationConfig[parent]}
 
+#define HANDLE void*
+
 struct SConfigValue {
     int64_t                                 intValue   = -INT64_MAX;
     float                                   floatValue = -__FLT_MAX__;
@@ -159,6 +161,9 @@ class CConfigManager {
 
     std::unordered_map<std::string, SAnimationPropertyConfig>       getAnimationConfig();
 
+    void                                                            addPluginConfigVar(HANDLE handle, const std::string& name, const SConfigValue& value);
+    void                                                            removePluginConfig(HANDLE handle);
+
     // no-op when done.
     void                      dispatchExecOnce();
 
@@ -180,38 +185,43 @@ class CConfigManager {
     std::string               configCurrentPath;
 
   private:
-    std::deque<std::string>                                                        configPaths;       // stores all the config paths
-    std::unordered_map<std::string, time_t>                                        configModifyTimes; // stores modify times
-    std::unordered_map<std::string, std::string>                                   configDynamicVars; // stores dynamic vars declared by the user
-    std::unordered_map<std::string, SConfigValue>                                  configValues;
-    std::unordered_map<std::string, std::unordered_map<std::string, SConfigValue>> deviceConfigs; // stores device configs
+    std::deque<std::string>                                                                    configPaths;       // stores all the config paths
+    std::unordered_map<std::string, time_t>                                                    configModifyTimes; // stores modify times
+    std::unordered_map<std::string, std::string>                                               configDynamicVars; // stores dynamic vars declared by the user
+    std::unordered_map<std::string, SConfigValue>                                              configValues;
+    std::unordered_map<std::string, std::unordered_map<std::string, SConfigValue>>             deviceConfigs; // stores device configs
 
-    std::unordered_map<std::string, SAnimationPropertyConfig>                      animationConfig; // stores all the animations with their set values
+    std::unordered_map<std::string, SAnimationPropertyConfig>                                  animationConfig; // stores all the animations with their set values
 
-    std::string                                                                    currentCategory = ""; // For storing the category of the current item
+    std::string                                                                                currentCategory = ""; // For storing the category of the current item
 
-    std::string                                                                    parseError = ""; // For storing a parse error to display later
+    std::string                                                                                parseError = ""; // For storing a parse error to display later
 
-    std::string                                                                    m_szCurrentSubmap = ""; // For storing the current keybind submap
+    std::string                                                                                m_szCurrentSubmap = ""; // For storing the current keybind submap
 
-    std::vector<std::pair<std::string, std::string>>                               boundWorkspaces;
+    std::vector<std::pair<std::string, std::string>>                                           boundWorkspaces;
 
-    std::vector<SExecRequestedRule>                                                execRequestedRules; // rules requested with exec, e.g. [workspace 2] kitty
+    std::vector<SExecRequestedRule>                                                            execRequestedRules; // rules requested with exec, e.g. [workspace 2] kitty
 
-    bool                                                                           isFirstLaunch = true; // For exec-once
+    std::unordered_map<HANDLE, std::unique_ptr<std::unordered_map<std::string, SConfigValue>>> pluginConfigs; // stores plugin configs
 
-    std::deque<SMonitorRule>                                                       m_dMonitorRules;
-    std::deque<SWindowRule>                                                        m_dWindowRules;
-    std::deque<SLayerRule>                                                         m_dLayerRules;
-    std::deque<std::string>                                                        m_dBlurLSNamespaces;
+    bool                                                                                       isFirstLaunch = true; // For exec-once
 
-    bool                                                                           firstExecDispatched = false;
-    std::deque<std::string>                                                        firstExecRequests;
+    std::deque<SMonitorRule>                                                                   m_dMonitorRules;
+    std::deque<SWindowRule>                                                                    m_dWindowRules;
+    std::deque<SLayerRule>                                                                     m_dLayerRules;
+    std::deque<std::string>                                                                    m_dBlurLSNamespaces;
+
+    bool                                                                                       firstExecDispatched = false;
+    std::deque<std::string>                                                                    firstExecRequests;
+
+    std::unordered_map<std::string, std::string>                                               environmentVariables;
 
     // internal methods
     void         setDefaultVars();
     void         setDefaultAnimationVars();
     void         setDeviceDefaultVars(const std::string&);
+    void         populateEnvironment();
 
     void         setAnimForChildren(SAnimationPropertyConfig* const);
     void         updateBlurredLS(const std::string&, const bool);
@@ -237,6 +247,7 @@ class CConfigManager {
     void         handleSubmap(const std::string&, const std::string&);
     void         handleBlurLS(const std::string&, const std::string&);
     void         handleBindWS(const std::string&, const std::string&);
+    void         handleEnv(const std::string&, const std::string&);
 };
 
 inline std::unique_ptr<CConfigManager> g_pConfigManager;

@@ -131,20 +131,30 @@ fractional-scale-v1-protocol.c:
 
 fractional-scale-v1-protocol.o: fractional-scale-v1-protocol.h
 
+text-input-unstable-v1-protocol.h:
+	$(WAYLAND_SCANNER) server-header \
+		$(WAYLAND_PROTOCOLS)/unstable/text-input/text-input-unstable-v1.xml $@
+
+text-input-unstable-v1-protocol.c:
+	$(WAYLAND_SCANNER) private-code \
+		$(WAYLAND_PROTOCOLS)/unstable/text-input/text-input-unstable-v1.xml $@
+
+text-input-unstable-v1-protocol.o: text-input-unstable-v1-protocol.h
+
 legacyrenderer:
-	mkdir -p build && cmake --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Release -DLEGACY_RENDERER:STRING=true -H./ -B./build -G Ninja
+	cmake --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Release -DLEGACY_RENDERER:BOOL=true -S . -B ./build -G Ninja
 	cmake --build ./build --config Release --target all -j$(shell nproc)
 
 legacyrendererdebug:
-	mkdir -p build && cmake --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Debug -DLEGACY_RENDERER:STRING=true -H./ -B./build -G Ninja
+	cmake --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Debug -DLEGACY_RENDERER:BOOL=true -S . -B ./build -G Ninja
 	cmake --build ./build --config Release --target all -j$(shell nproc)
 
 release:
-	mkdir -p build && cmake --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Release -H./ -B./build -G Ninja
+	cmake --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Release -S . -B ./build -G Ninja
 	cmake --build ./build --config Release --target all -j$(shell nproc)
 
 debug:
-	mkdir -p build && cmake --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Debug -H./ -B./build -G Ninja
+	cmake --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Debug -S . -B ./build -G Ninja
 	cmake --build ./build --config Debug --target all -j$(shell nproc)
 
 clear:
@@ -156,24 +166,26 @@ clear:
 all:
 	make clear
 	make fixwlr
-	cd ./subprojects/wlroots && meson build/ --buildtype=release && ninja -C build/ && cp ./build/libwlroots.so.12032 /usr/lib/ && cd ../..
+	cd ./subprojects/wlroots && meson setup build/ --buildtype=release && ninja -C build/ && cp ./build/libwlroots.so.12032 ${PREFIX}/lib/ || echo "Could not install libwlroots to ${PREFIX}/lib/libwlroots.so.12032"
+	cd subprojects/udis86 && cmake --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Release -S . -B./build -G Ninja && cmake --build ./build --config Release --target all -j$(shell nproc)
 	make protocols
 	make release
-	cd hyprctl && make all && cd ..
+	make -C hyprctl all
 
 install:
 	make clear
 	make fixwlr
-	cd ./subprojects/wlroots && meson build/ --buildtype=release && ninja -C build/ && cp ./build/libwlroots.so.12032 /usr/lib/ && cd ../..
+	cd ./subprojects/wlroots && meson setup build/ --buildtype=release && ninja -C build/ && cp ./build/libwlroots.so.12032 ${PREFIX}/lib/ || echo "Could not install libwlroots to ${PREFIX}/lib/libwlroots.so.12032"
+	cd subprojects/udis86 && cmake --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Release -S . -B./build -G Ninja && cmake --build ./build --config Release --target all -j$(shell nproc) && cd ../..
 	make protocols
 	make release
-	cd hyprctl && make all && cd ..
+	make -C hyprctl all
 
-	mkdir -p /usr/share/wayland-sessions
+	mkdir -p ${PREFIX}/share/wayland-sessions
 	mkdir -p ${PREFIX}/bin
 	cp ./build/Hyprland ${PREFIX}/bin
 	cp ./hyprctl/hyprctl ${PREFIX}/bin
-	if [ ! -f /usr/share/wayland-sessions/hyprland.desktop ]; then cp ./example/hyprland.desktop /usr/share/wayland-sessions; fi
+	if [ ! -f ${PREFIX}/share/wayland-sessions/hyprland.desktop ]; then cp ./example/hyprland.desktop ${PREFIX}/share/wayland-sessions; fi
 	mkdir -p ${PREFIX}/share/hyprland
 	cp ./assets/wall_2K.png ${PREFIX}/share/hyprland
 	cp ./assets/wall_4K.png ${PREFIX}/share/hyprland
@@ -189,12 +201,12 @@ uninstall:
 	rm -f ${PREFIX}/share/wayland-sessions/hyprland.desktop
 	rm -f ${PREFIX}/bin/Hyprland
 	rm -f ${PREFIX}/bin/hyprctl
-	rm -f /usr/lib/libwlroots.so.12032
+	rm -f ${PREFIX}/lib/libwlroots.so.12032
 	rm -rf ${PREFIX}/share/hyprland
 	rm -f ${PREFIX}/share/man/man1/Hyprland.1
 	rm -f ${PREFIX}/share/man/man1/hyprctl.1
 
-protocols: xdg-shell-protocol.o wlr-layer-shell-unstable-v1-protocol.o wlr-screencopy-unstable-v1-protocol.o idle-protocol.o ext-workspace-unstable-v1-protocol.o pointer-constraints-unstable-v1-protocol.o tablet-unstable-v2-protocol.o wlr-output-power-management-unstable-v1-protocol.o linux-dmabuf-unstable-v1-protocol.o hyprland-toplevel-export-v1-protocol.o wlr-foreign-toplevel-management-unstable-v1-protocol.o fractional-scale-v1-protocol.o
+protocols: xdg-shell-protocol.o wlr-layer-shell-unstable-v1-protocol.o wlr-screencopy-unstable-v1-protocol.o idle-protocol.o ext-workspace-unstable-v1-protocol.o pointer-constraints-unstable-v1-protocol.o tablet-unstable-v2-protocol.o wlr-output-power-management-unstable-v1-protocol.o linux-dmabuf-unstable-v1-protocol.o hyprland-toplevel-export-v1-protocol.o wlr-foreign-toplevel-management-unstable-v1-protocol.o fractional-scale-v1-protocol.o text-input-unstable-v1-protocol.o
 
 fixwlr:
 	sed -i -E 's/(soversion = 12)([^032]|$$)/soversion = 12032/g' subprojects/wlroots/meson.build
@@ -206,20 +218,32 @@ config:
 
 	make fixwlr
 
-	cd subprojects/wlroots && meson ./build --prefix=/usr --buildtype=release -Dwerror=false -Dexamples=false
-	cd subprojects/wlroots && ninja -C build/
+	meson setup subprojects/wlroots/build subprojects/wlroots --prefix=${PREFIX} --buildtype=release -Dwerror=false -Dexamples=false
+	ninja -C subprojects/wlroots/build/
 
-	cd subprojects/wlroots && ninja -C build/ install
+	ninja -C subprojects/wlroots/build/ install
+
+	cd subprojects/udis86 && cmake --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Release -S . -B ./build -G Ninja && cmake --build ./build --config Release --target all -j$(shell nproc)
+
+pluginenv:
+	make protocols
+
+	cd subprojects/udis86 && cmake --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Release -S . -B ./build -G Ninja && cmake --build ./build --config Release --target all -j$(shell nproc)
+
+	make fixwlr
+
+	meson setup subprojects/wlroots/build subprojects/wlroots --prefix=${PREFIX} --buildtype=release -Dwerror=false -Dexamples=false
+	ninja -C subprojects/wlroots/build/
 
 configdebug:
 	make protocols
 
 	make fixwlr
 
-	cd subprojects/wlroots && meson ./build --prefix=/usr --buildtype=debug -Dwerror=false -Dexamples=false -Db_sanitize=address
-	cd subprojects/wlroots && ninja -C build/
+	meson setup subprojects/wlroots/build subprojects/wlroots --prefix=${PREFIX} --buildtype=debug -Dwerror=false -Dexamples=false -Db_sanitize=address
+	ninja -C subprojects/wlroots/build/
 
-	cd subprojects/wlroots && ninja -C build/ install
+	ninja -C subprojects/wlroots/build/ install
 
 man:
 	pandoc ./docs/Hyprland.1.rst \

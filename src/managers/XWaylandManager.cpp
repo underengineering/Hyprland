@@ -90,6 +90,9 @@ void CHyprXWaylandManager::getGeometryForWindow(CWindow* pWindow, wlr_box* pbox)
 }
 
 std::string CHyprXWaylandManager::getTitle(CWindow* pWindow) {
+    if (!pWindow->m_bIsMapped)
+        return "";
+
     try {
         if (pWindow->m_bIsX11) {
             if (pWindow->m_uSurface.xwayland && pWindow->m_uSurface.xwayland->title) {
@@ -108,12 +111,12 @@ std::string CHyprXWaylandManager::getTitle(CWindow* pWindow) {
 }
 
 std::string CHyprXWaylandManager::getAppIDClass(CWindow* pWindow) {
+    if (!pWindow->m_bMappedX11 || !pWindow->m_bIsMapped)
+        return "";
+
     try {
         if (pWindow->m_bIsX11) {
             if (pWindow->m_uSurface.xwayland && pWindow->m_uSurface.xwayland->_class) {
-                if (!pWindow->m_bMappedX11 || !pWindow->m_bIsMapped)
-                    return "unmanaged X11";
-
                 return std::string(pWindow->m_uSurface.xwayland->_class);
             }
         } else if (pWindow->m_uSurface.xdg) {
@@ -136,7 +139,7 @@ void CHyprXWaylandManager::sendCloseWindow(CWindow* pWindow) {
     }
 }
 
-void CHyprXWaylandManager::setWindowSize(CWindow* pWindow, const Vector2D& size, bool force) {
+void CHyprXWaylandManager::setWindowSize(CWindow* pWindow, Vector2D size, bool force) {
 
     if (!force &&
         ((pWindow->m_vReportedSize == size && pWindow->m_vRealPosition.vec() == pWindow->m_vReportedPosition) || (pWindow->m_vReportedSize == size && !pWindow->m_bIsX11)))

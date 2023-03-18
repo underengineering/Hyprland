@@ -3,6 +3,7 @@
 #include "../defines.hpp"
 #include "../helpers/Monitor.hpp"
 #include "../helpers/Color.hpp"
+#include "../helpers/Timer.hpp"
 #include <list>
 #include <unordered_map>
 
@@ -21,6 +22,12 @@ inline const float fullVerts[] = {
     0, 1, // bottom left
 };
 inline const float fanVertsFull[] = {-1.0f, -1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f};
+
+enum eDiscardMode
+{
+    DISCARD_OPAQUE    = 1,
+    DISCARD_ALPHAZERO = 1 << 1
+};
 
 struct SMonitorRenderData {
     CFramebuffer primaryFB;
@@ -41,6 +48,7 @@ struct SMonitorRenderData {
     bool    m_bShadersInitialized = false;
     CShader m_shQUAD;
     CShader m_shRGBA;
+    CShader m_shPASSTHRURGBA;
     CShader m_shRGBX;
     CShader m_shEXT;
     CShader m_shBLUR1;
@@ -62,6 +70,8 @@ struct SCurrentRenderData {
     Vector2D            primarySurfaceUVBottomRight = Vector2D(-1, -1);
 
     wlr_box             clipBox = {};
+
+    uint32_t            discardMode = DISCARD_OPAQUE;
 };
 
 class CGradientValueData;
@@ -76,7 +86,7 @@ class CHyprOpenGLImpl {
     void                                       renderRect(wlr_box*, const CColor&, int round = 0);
     void                                       renderRectWithDamage(wlr_box*, const CColor&, pixman_region32_t* damage, int round = 0);
     void                                       renderTexture(wlr_texture*, wlr_box*, float a, int round = 0, bool allowCustomUV = false);
-    void                                       renderTexture(const CTexture&, wlr_box*, float a, int round = 0, bool discardOpaque = false, bool allowCustomUV = false);
+    void                                       renderTexture(const CTexture&, wlr_box*, float a, int round = 0, bool discardActive = false, bool allowCustomUV = false);
     void                                       renderTextureWithBlur(const CTexture&, wlr_box*, float a, wlr_surface* pSurface, int round = 0, bool blockBlurOptimization = false);
     void                                       renderRoundedShadow(wlr_box*, int round, int range, float a = 1.0);
     void                                       renderBorder(wlr_box*, const CGradientValueData&, int round, float a = 1.0);
@@ -102,9 +112,6 @@ class CHyprOpenGLImpl {
 
     void                                       saveBufferForMirror();
     void                                       renderMirrored();
-
-    void                                       onWindowResizeStart(CWindow*);
-    void                                       onWindowResizeEnd(CWindow*);
 
     void                                       applyScreenShader(const std::string& path);
 
@@ -136,6 +143,7 @@ class CHyprOpenGLImpl {
     bool              m_bApplyFinalShader = false;
 
     CShader           m_sFinalScreenShader;
+    CTimer            m_tGlobalTimer;
 
     GLuint            createProgram(const std::string&, const std::string&, bool dynamic = false);
     GLuint            compileShader(const GLuint&, std::string, bool dynamic = false);

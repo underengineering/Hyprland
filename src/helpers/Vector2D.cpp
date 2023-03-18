@@ -1,5 +1,6 @@
 #include "Vector2D.hpp"
 #include <algorithm>
+#include <cmath>
 
 Vector2D::Vector2D(double xx, double yy) {
     x = xx;
@@ -29,4 +30,10 @@ Vector2D Vector2D::floor() {
 
 Vector2D Vector2D::clamp(const Vector2D& min, const Vector2D& max) {
     return Vector2D(std::clamp(this->x, min.x, max.x == 0 ? INFINITY : max.x), std::clamp(this->y, min.y, max.y == 0 ? INFINITY : max.y));
+}
+
+double Vector2D::distance(const Vector2D& other) {
+    double dx = x - other.x;
+    double dy = y - other.y;
+    return std::sqrt(dx * dx + dy * dy);
 }

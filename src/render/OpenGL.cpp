@@ -26,9 +26,13 @@ CHyprOpenGLImpl::CHyprOpenGLImpl() {
     Debug::log(WARN, "!RENDERER: Using the legacy GLES2 renderer!");
 #endif
 
+    g_pHookSystem->hookDynamic("preRender", [&](void* self, std::any data) { preRender(std::any_cast<CMonitor*>(data)); });
+
     pixman_region32_init(&m_rOriginalDamageRegion);
 
     RASSERT(eglMakeCurrent(wlr_egl_get_display(g_pCompositor->m_sWLREGL), EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT), "Couldn't unset current EGL!");
+
+    m_tGlobalTimer.reset();
 }
 
 GLuint CHyprOpenGLImpl::createProgram(const std::string& vert, const std::string& frag, bool dynamic) {
@@ -186,12 +190,20 @@ void CHyprOpenGLImpl::initShaders() {
     m_RenderData.pCurrentMonData->m_shRGBA.texAttrib            = glGetAttribLocation(prog, "texcoord");
     m_RenderData.pCurrentMonData->m_shRGBA.posAttrib            = glGetAttribLocation(prog, "pos");
     m_RenderData.pCurrentMonData->m_shRGBA.discardOpaque        = glGetUniformLocation(prog, "discardOpaque");
+    m_RenderData.pCurrentMonData->m_shRGBA.discardAlphaZero     = glGetUniformLocation(prog, "discardAlphaZero");
     m_RenderData.pCurrentMonData->m_shRGBA.topLeft              = glGetUniformLocation(prog, "topLeft");
     m_RenderData.pCurrentMonData->m_shRGBA.fullSize             = glGetUniformLocation(prog, "fullSize");
     m_RenderData.pCurrentMonData->m_shRGBA.radius               = glGetUniformLocation(prog, "radius");
     m_RenderData.pCurrentMonData->m_shRGBA.primitiveMultisample = glGetUniformLocation(prog, "primitiveMultisample");
     m_RenderData.pCurrentMonData->m_shRGBA.applyTint            = glGetUniformLocation(prog, "applyTint");
     m_RenderData.pCurrentMonData->m_shRGBA.tint                 = glGetUniformLocation(prog, "tint");
+
+    prog                                                     = createProgram(TEXVERTSRC, TEXFRAGSRCRGBAPASSTHRU);
+    m_RenderData.pCurrentMonData->m_shPASSTHRURGBA.program   = prog;
+    m_RenderData.pCurrentMonData->m_shPASSTHRURGBA.proj      = glGetUniformLocation(prog, "proj");
+    m_RenderData.pCurrentMonData->m_shPASSTHRURGBA.tex       = glGetUniformLocation(prog, "tex");
+    m_RenderData.pCurrentMonData->m_shPASSTHRURGBA.texAttrib = glGetAttribLocation(prog, "texcoord");
+    m_RenderData.pCurrentMonData->m_shPASSTHRURGBA.posAttrib = glGetAttribLocation(prog, "pos");
 
     prog                                                        = createProgram(TEXVERTSRC, TEXFRAGSRCRGBX);
     m_RenderData.pCurrentMonData->m_shRGBX.program              = prog;
@@ -301,8 +313,15 @@ void CHyprOpenGLImpl::applyScreenShader(const std::string& path) {
         return;
     }
 
-    m_sFinalScreenShader.proj      = glGetUniformLocation(m_sFinalScreenShader.program, "proj");
-    m_sFinalScreenShader.tex       = glGetUniformLocation(m_sFinalScreenShader.program, "tex");
+    m_sFinalScreenShader.proj = glGetUniformLocation(m_sFinalScreenShader.program, "proj");
+    m_sFinalScreenShader.tex  = glGetUniformLocation(m_sFinalScreenShader.program, "tex");
+    m_sFinalScreenShader.time = glGetUniformLocation(m_sFinalScreenShader.program, "time");
+    if (m_sFinalScreenShader.time != -1 && g_pConfigManager->getInt("debug:damage_tracking") != 0) {
+        // The screen shader uses the "time" uniform
+        // Since the screen shader could change every frame, damage tracking *needs* to be disabled
+        g_pConfigManager->addParseError("Screen shader: Screen shader uses uniform 'time', which requires debug:damage_tracking to be switched off.\n"
+                                        "WARNING: Disabling damage tracking will *massively* increase GPU utilization!");
+    }
     m_sFinalScreenShader.texAttrib = glGetAttribLocation(m_sFinalScreenShader.program, "texcoord");
     m_sFinalScreenShader.posAttrib = glGetAttribLocation(m_sFinalScreenShader.program, "pos");
 }
@@ -448,15 +467,15 @@ void CHyprOpenGLImpl::renderTexture(wlr_texture* tex, wlr_box* pBox, float alpha
     renderTexture(CTexture(tex), pBox, alpha, round, false, allowCustomUV);
 }
 
-void CHyprOpenGLImpl::renderTexture(const CTexture& tex, wlr_box* pBox, float alpha, int round, bool discardopaque, bool allowCustomUV) {
+void CHyprOpenGLImpl::renderTexture(const CTexture& tex, wlr_box* pBox, float alpha, int round, bool discardActive, bool allowCustomUV) {
     RASSERT(m_RenderData.pMonitor, "Tried to render texture without begin()!");
 
-    renderTextureInternalWithDamage(tex, pBox, alpha, m_RenderData.pDamage, round, discardopaque, false, allowCustomUV, true);
+    renderTextureInternalWithDamage(tex, pBox, alpha, m_RenderData.pDamage, round, discardActive, false, allowCustomUV, true);
 
     scissor((wlr_box*)nullptr);
 }
 
-void CHyprOpenGLImpl::renderTextureInternalWithDamage(const CTexture& tex, wlr_box* pBox, float alpha, pixman_region32_t* damage, int round, bool discardOpaque, bool noAA,
+void CHyprOpenGLImpl::renderTextureInternalWithDamage(const CTexture& tex, wlr_box* pBox, float alpha, pixman_region32_t* damage, int round, bool discardActive, bool noAA,
                                                       bool allowCustomUV, bool allowDim) {
     RASSERT(m_RenderData.pMonitor, "Tried to render texture without begin()!");
     RASSERT((tex.m_iTexID > 0), "Attempted to draw NULL texture!");
@@ -487,11 +506,16 @@ void CHyprOpenGLImpl::renderTextureInternalWithDamage(const CTexture& tex, wlr_b
         shader           = &m_sFinalScreenShader;
         usingFinalShader = true;
     } else {
-        switch (tex.m_iType) {
-            case TEXTURE_RGBA: shader = &m_RenderData.pCurrentMonData->m_shRGBA; break;
-            case TEXTURE_RGBX: shader = &m_RenderData.pCurrentMonData->m_shRGBX; break;
-            case TEXTURE_EXTERNAL: shader = &m_RenderData.pCurrentMonData->m_shEXT; break;
-            default: RASSERT(false, "tex.m_iTarget unsupported!");
+        if (m_bApplyFinalShader) {
+            shader           = &m_RenderData.pCurrentMonData->m_shPASSTHRURGBA;
+            usingFinalShader = true;
+        } else {
+            switch (tex.m_iType) {
+                case TEXTURE_RGBA: shader = &m_RenderData.pCurrentMonData->m_shRGBA; break;
+                case TEXTURE_RGBX: shader = &m_RenderData.pCurrentMonData->m_shRGBX; break;
+                case TEXTURE_EXTERNAL: shader = &m_RenderData.pCurrentMonData->m_shEXT; break;
+                default: RASSERT(false, "tex.m_iTarget unsupported!");
+            }
         }
     }
 
@@ -509,9 +533,24 @@ void CHyprOpenGLImpl::renderTextureInternalWithDamage(const CTexture& tex, wlr_b
     glUniformMatrix3fv(shader->proj, 1, GL_FALSE, glMatrix);
 #endif
     glUniform1i(shader->tex, 0);
+
+    if (usingFinalShader && g_pConfigManager->getInt("debug:damage_tracking") == 0) {
+        glUniform1f(shader->time, m_tGlobalTimer.getSeconds());
+    } else if (usingFinalShader && shader->time > 0) {
+        // Don't let time be unitialised
+        glUniform1f(shader->time, 0.f);
+    }
+
     if (!usingFinalShader) {
         glUniform1f(shader->alpha, alpha);
-        glUniform1i(shader->discardOpaque, (int)discardOpaque);
+
+        if (discardActive) {
+            glUniform1i(shader->discardOpaque, !!(m_RenderData.discardMode & DISCARD_OPAQUE));
+            glUniform1i(shader->discardAlphaZero, !!(m_RenderData.discardMode & DISCARD_ALPHAZERO));
+        } else {
+            glUniform1i(shader->discardOpaque, 0);
+            glUniform1i(shader->discardAlphaZero, 0);
+        }
     }
 
     wlr_box transformedBox;
@@ -1201,10 +1240,6 @@ void CHyprOpenGLImpl::makeLayerSnapshot(SLayerSurface* pLayer) {
 
     wlr_output_rollback(PMONITOR->output);
 }
-
-void CHyprOpenGLImpl::onWindowResizeStart(CWindow* pWindow) {}
-
-void CHyprOpenGLImpl::onWindowResizeEnd(CWindow* pWindow) {}
 
 void CHyprOpenGLImpl::renderSnapshot(CWindow** pWindow) {
     RASSERT(m_RenderData.pMonitor, "Tried to render snapshot rect without begin()!");

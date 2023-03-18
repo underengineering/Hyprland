@@ -7,6 +7,7 @@
 #include "render/decorations/IHyprWindowDecoration.hpp"
 #include <deque>
 #include "config/ConfigDataValues.hpp"
+#include "helpers/Vector2D.hpp"
 
 enum eIdleInhibitMode
 {
@@ -154,6 +155,7 @@ class CWindow {
     DYNLISTENER(toplevelClose);
     DYNLISTENER(toplevelActivate);
     DYNLISTENER(toplevelFullscreen);
+    DYNLISTENER(setOverrideRedirect);
     // DYNLISTENER(newSubsurfaceWindow);
 
     union {
@@ -272,6 +274,12 @@ class CWindow {
     // for idle inhibiting windows
     eIdleInhibitMode m_eIdleInhibitMode = IDLEINHIBIT_NONE;
 
+    // for groups
+    struct SGroupData {
+        CWindow* pNextWindow = nullptr; // nullptr means no grouping. Self means single group.
+        bool     head        = false;
+    } m_sGroupData;
+
     // For the list lookup
     bool operator==(const CWindow& rhs) {
         return m_uSurface.xdg == rhs.m_uSurface.xdg && m_uSurface.xwayland == rhs.m_uSurface.xwayland && m_vPosition == rhs.m_vPosition && m_vSize == rhs.m_vSize &&
@@ -279,25 +287,36 @@ class CWindow {
     }
 
     // methods
-    wlr_box                getFullWindowBoundingBox();
-    wlr_box                getWindowIdealBoundingBoxIgnoreReserved();
-    void                   updateWindowDecos();
-    pid_t                  getPID();
-    IHyprWindowDecoration* getDecorationByType(eDecorationType);
-    void                   removeDecorationByType(eDecorationType);
-    void                   createToplevelHandle();
-    void                   destroyToplevelHandle();
-    void                   updateToplevel();
-    void                   updateSurfaceOutputs();
-    void                   moveToWorkspace(int);
-    CWindow*               X11TransientFor();
-    void                   onUnmap();
-    void                   onMap();
-    void                   setHidden(bool hidden);
-    bool                   isHidden();
-    void                   applyDynamicRule(const SWindowRule& r);
-    void                   updateDynamicRules();
-    void                   onBorderAngleAnimEnd(void* ptr);
+    wlr_box                  getFullWindowBoundingBox();
+    wlr_box                  getWindowInputBox();
+    wlr_box                  getWindowIdealBoundingBoxIgnoreReserved();
+    void                     updateWindowDecos();
+    pid_t                    getPID();
+    IHyprWindowDecoration*   getDecorationByType(eDecorationType);
+    void                     removeDecorationByType(eDecorationType);
+    void                     createToplevelHandle();
+    void                     destroyToplevelHandle();
+    void                     updateToplevel();
+    void                     updateSurfaceOutputs();
+    void                     moveToWorkspace(int);
+    CWindow*                 X11TransientFor();
+    void                     onUnmap();
+    void                     onMap();
+    void                     setHidden(bool hidden);
+    bool                     isHidden();
+    void                     applyDynamicRule(const SWindowRule& r);
+    void                     updateDynamicRules();
+    SWindowDecorationExtents getFullWindowReservedArea();
+
+    void                     onBorderAngleAnimEnd(void* ptr);
+    bool                     isInCurvedCorner(double x, double y);
+    bool                     hasPopupAt(const Vector2D& pos);
+
+    CWindow*                 getGroupHead();
+    CWindow*                 getGroupTail();
+    CWindow*                 getGroupCurrent();
+    void                     setGroupCurrent(CWindow* pWindow);
+    void                     insertWindowToGroup(CWindow* pWindow);
 
   private:
     // For hidden windows and stuff
