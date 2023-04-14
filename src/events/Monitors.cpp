@@ -19,6 +19,9 @@ void Events::listener_change(wl_listener* listener, void* data) {
     // layout got changed, let's update monitors.
     const auto CONFIG = wlr_output_configuration_v1_create();
 
+    if (!CONFIG)
+        return;
+
     for (auto& m : g_pCompositor->m_vMonitors) {
         if (!m->output)
             continue;
@@ -195,4 +198,25 @@ void Events::listener_monitorStateRequest(void* owner, void* data) {
     const auto E        = (wlr_output_event_request_state*)data;
 
     wlr_output_commit_state(PMONITOR->output, E->state);
+}
+
+void Events::listener_monitorDamage(void* owner, void* data) {
+    const auto PMONITOR = (CMonitor*)owner;
+    const auto E        = (wlr_output_event_damage*)data;
+
+    PMONITOR->addDamage(E->damage);
+}
+
+void Events::listener_monitorNeedsFrame(void* owner, void* data) {
+    const auto PMONITOR = (CMonitor*)owner;
+
+    g_pCompositor->scheduleFrameForMonitor(PMONITOR);
+}
+
+void Events::listener_monitorCommit(void* owner, void* data) {
+    const auto PMONITOR = (CMonitor*)owner;
+
+    const auto E = (wlr_output_event_commit*)data;
+
+    g_pProtocolManager->m_pScreencopyProtocolManager->onOutputCommit(PMONITOR, E);
 }

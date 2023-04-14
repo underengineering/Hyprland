@@ -126,6 +126,8 @@ static std::string getWindowData(CWindow* w, HyprCtl::eHyprCtlOutputFormat forma
     "monitor": %i,
     "class": "%s",
     "title": "%s",
+    "initialClass": "%s",
+    "initialTitle": "%s",
     "pid": %i,
     "xwayland": %s,
     "pinned": %s,
@@ -142,13 +144,14 @@ static std::string getWindowData(CWindow* w, HyprCtl::eHyprCtlOutputFormat forma
                                                                                        std::string("Invalid workspace " + std::to_string(w->m_iWorkspaceID)))
                 .c_str(),
             ((int)w->m_bIsFloating == 1 ? "true" : "false"), w->m_iMonitorID, escapeJSONStrings(g_pXWaylandManager->getAppIDClass(w)).c_str(),
-            escapeJSONStrings(g_pXWaylandManager->getTitle(w)).c_str(), w->getPID(), ((int)w->m_bIsX11 == 1 ? "true" : "false"), (w->m_bPinned ? "true" : "false"),
-            (w->m_bIsFullscreen ? "true" : "false"),
+            escapeJSONStrings(g_pXWaylandManager->getTitle(w)).c_str(), escapeJSONStrings(w->m_szInitialClass).c_str(), escapeJSONStrings(w->m_szInitialTitle).c_str(), w->getPID(),
+            ((int)w->m_bIsX11 == 1 ? "true" : "false"), (w->m_bPinned ? "true" : "false"), (w->m_bIsFullscreen ? "true" : "false"),
             (w->m_bIsFullscreen ? (g_pCompositor->getWorkspaceByID(w->m_iWorkspaceID) ? g_pCompositor->getWorkspaceByID(w->m_iWorkspaceID)->m_efFullscreenMode : 0) : 0),
             w->m_bFakeFullscreenState ? "true" : "false", getGroupedData(w, format).c_str(), (w->m_pSwallowed ? getFormat("\"0x%x\"", w->m_pSwallowed).c_str() : "null"));
     } else {
         return getFormat(
-            "Window %x -> %s:\n\tmapped: %i\n\thidden: %i\n\tat: %i,%i\n\tsize: %i,%i\n\tworkspace: %i (%s)\n\tfloating: %i\n\tmonitor: %i\n\tclass: %s\n\ttitle: %s\n\tpid: "
+            "Window %x -> %s:\n\tmapped: %i\n\thidden: %i\n\tat: %i,%i\n\tsize: %i,%i\n\tworkspace: %i (%s)\n\tfloating: %i\n\tmonitor: %i\n\tclass: %s\n\ttitle: "
+            "%s\n\tinitialClass: %s\n\tinitialTitle: %s\n\tpid: "
             "%i\n\txwayland: %i\n\tpinned: "
             "%i\n\tfullscreen: %i\n\tfullscreenmode: %i\n\tfakefullscreen: %i\n\tgrouped: %s\n\tswallowing: %x\n\n",
             w, w->m_szTitle.c_str(), (int)w->m_bIsMapped, (int)w->isHidden(), (int)w->m_vRealPosition.goalv().x, (int)w->m_vRealPosition.goalv().y, (int)w->m_vRealSize.goalv().x,
@@ -156,8 +159,8 @@ static std::string getWindowData(CWindow* w, HyprCtl::eHyprCtlOutputFormat forma
             (w->m_iWorkspaceID == -1                                ? "" :
                  g_pCompositor->getWorkspaceByID(w->m_iWorkspaceID) ? g_pCompositor->getWorkspaceByID(w->m_iWorkspaceID)->m_szName.c_str() :
                                                                       std::string("Invalid workspace " + std::to_string(w->m_iWorkspaceID)).c_str()),
-            (int)w->m_bIsFloating, w->m_iMonitorID, g_pXWaylandManager->getAppIDClass(w).c_str(), g_pXWaylandManager->getTitle(w).c_str(), w->getPID(), (int)w->m_bIsX11,
-            (int)w->m_bPinned, (int)w->m_bIsFullscreen,
+            (int)w->m_bIsFloating, w->m_iMonitorID, g_pXWaylandManager->getAppIDClass(w).c_str(), g_pXWaylandManager->getTitle(w).c_str(), w->m_szInitialClass.c_str(),
+            w->m_szInitialTitle.c_str(), w->getPID(), (int)w->m_bIsX11, (int)w->m_bPinned, (int)w->m_bIsFullscreen,
             (w->m_bIsFullscreen ? (g_pCompositor->getWorkspaceByID(w->m_iWorkspaceID) ? g_pCompositor->getWorkspaceByID(w->m_iWorkspaceID)->m_efFullscreenMode : 0) : 0),
             (int)w->m_bFakeFullscreenState, getGroupedData(w, format).c_str(), w->m_pSwallowed);
     }
@@ -191,7 +194,8 @@ std::string workspacesRequest(HyprCtl::eHyprCtlOutputFormat format) {
         result += "[";
 
         for (auto& w : g_pCompositor->m_vWorkspaces) {
-            const auto PLASTW = w->getLastFocusedWindow();
+            const auto PLASTW   = w->getLastFocusedWindow();
+            const auto PMONITOR = g_pCompositor->getMonitorFromID(w->m_iMonitorID);
 
             result += getFormat(
                 R"#({
@@ -203,9 +207,8 @@ std::string workspacesRequest(HyprCtl::eHyprCtlOutputFormat format) {
     "lastwindow": "0x%x",
     "lastwindowtitle": "%s"
 },)#",
-                w->m_iID, escapeJSONStrings(w->m_szName).c_str(), escapeJSONStrings(g_pCompositor->getMonitorFromID(w->m_iMonitorID)->szName).c_str(),
-                g_pCompositor->getWindowsOnWorkspace(w->m_iID), ((int)w->m_bHasFullscreenWindow == 1 ? "true" : "false"), PLASTW,
-                PLASTW ? escapeJSONStrings(PLASTW->m_szTitle).c_str() : "");
+                w->m_iID, escapeJSONStrings(w->m_szName).c_str(), escapeJSONStrings(PMONITOR ? PMONITOR->szName : "?").c_str(), g_pCompositor->getWindowsOnWorkspace(w->m_iID),
+                ((int)w->m_bHasFullscreenWindow == 1 ? "true" : "false"), PLASTW, PLASTW ? escapeJSONStrings(PLASTW->m_szTitle).c_str() : "");
         }
 
         // remove trailing comma
@@ -214,10 +217,11 @@ std::string workspacesRequest(HyprCtl::eHyprCtlOutputFormat format) {
         result += "]";
     } else {
         for (auto& w : g_pCompositor->m_vWorkspaces) {
-            const auto PLASTW = w->getLastFocusedWindow();
+            const auto PLASTW   = w->getLastFocusedWindow();
+            const auto PMONITOR = g_pCompositor->getMonitorFromID(w->m_iMonitorID);
             result += getFormat("workspace ID %i (%s) on monitor %s:\n\twindows: %i\n\thasfullscreen: %i\n\tlastwindow: 0x%x\n\tlastwindowtitle: %s\n\n", w->m_iID,
-                                w->m_szName.c_str(), g_pCompositor->getMonitorFromID(w->m_iMonitorID)->szName.c_str(), g_pCompositor->getWindowsOnWorkspace(w->m_iID),
-                                (int)w->m_bHasFullscreenWindow, PLASTW, PLASTW ? PLASTW->m_szTitle.c_str() : "");
+                                w->m_szName.c_str(), PMONITOR ? PMONITOR->szName.c_str() : "?", g_pCompositor->getWindowsOnWorkspace(w->m_iID), (int)w->m_bHasFullscreenWindow,
+                                PLASTW, PLASTW ? PLASTW->m_szTitle.c_str() : "");
         }
     }
     return result;
@@ -528,6 +532,29 @@ std::string animationsRequest(HyprCtl::eHyprCtlOutputFormat format) {
         ret.pop_back();
 
         ret += "]]";
+    }
+
+    return ret;
+}
+
+std::string globalShortcutsRequest(HyprCtl::eHyprCtlOutputFormat format) {
+    std::string ret       = "";
+    const auto  SHORTCUTS = g_pProtocolManager->m_pGlobalShortcutsProtocolManager->getAllShortcuts();
+    if (format == HyprCtl::eHyprCtlOutputFormat::FORMAT_NORMAL) {
+        for (auto& sh : SHORTCUTS)
+            ret += getFormat("%s:%s -> %s\n", sh.appid.c_str(), sh.id.c_str(), sh.description.c_str());
+    } else {
+        ret += "[";
+        for (auto& sh : SHORTCUTS) {
+            ret += getFormat(R"#(
+{
+    "name": "%s",
+    "description": "%s"
+},)#",
+                             escapeJSONStrings(sh.appid + ":" + sh.id).c_str(), escapeJSONStrings(sh.description).c_str());
+        }
+        ret.pop_back();
+        ret += "]\n";
     }
 
     return ret;
@@ -1155,7 +1182,7 @@ std::string dispatchNotify(std::string request) {
         icon = std::stoi(ICON);
     } catch (std::exception& e) { return "invalid arg 1"; }
 
-    if (icon == -1 || icon > ICON_NONE) {
+    if (icon > ICON_NONE || icon < 0) {
         icon = ICON_NONE;
     }
 
@@ -1225,6 +1252,8 @@ std::string getReply(std::string request) {
         return cursorPosRequest(format);
     else if (request == "binds")
         return bindsRequest(format);
+    else if (request == "globalshortcuts")
+        return globalShortcutsRequest(format);
     else if (request == "animations")
         return animationsRequest(format);
     else if (request.find("plugin") == 0)
@@ -1287,7 +1316,7 @@ int hyprCtlFDTick(int fd, uint32_t mask, void* data) {
     close(ACCEPTEDCONNECTION);
 
     if (g_pConfigManager->m_bWantsMonitorReload) {
-        g_pConfigManager->ensureDPMS();
+        g_pConfigManager->ensureMonitorStatus();
     }
 
     return 0;

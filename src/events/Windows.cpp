@@ -40,11 +40,12 @@ void setAnimToMove(void* data) {
 void Events::listener_mapWindow(void* owner, void* data) {
     CWindow*           PWINDOW = (CWindow*)owner;
 
-    static auto* const PINACTIVEALPHA = &g_pConfigManager->getConfigValuePtr("decoration:inactive_opacity")->floatValue;
-    static auto* const PACTIVEALPHA   = &g_pConfigManager->getConfigValuePtr("decoration:active_opacity")->floatValue;
-    static auto* const PDIMSTRENGTH   = &g_pConfigManager->getConfigValuePtr("decoration:dim_strength")->floatValue;
-    static auto* const PSWALLOW       = &g_pConfigManager->getConfigValuePtr("misc:enable_swallow")->intValue;
-    static auto* const PSWALLOWREGEX  = &g_pConfigManager->getConfigValuePtr("misc:swallow_regex")->strValue;
+    static auto* const PINACTIVEALPHA  = &g_pConfigManager->getConfigValuePtr("decoration:inactive_opacity")->floatValue;
+    static auto* const PACTIVEALPHA    = &g_pConfigManager->getConfigValuePtr("decoration:active_opacity")->floatValue;
+    static auto* const PDIMSTRENGTH    = &g_pConfigManager->getConfigValuePtr("decoration:dim_strength")->floatValue;
+    static auto* const PSWALLOW        = &g_pConfigManager->getConfigValuePtr("misc:enable_swallow")->intValue;
+    static auto* const PSWALLOWREGEX   = &g_pConfigManager->getConfigValuePtr("misc:swallow_regex")->strValue;
+    static auto* const PSWALLOWEXREGEX = &g_pConfigManager->getConfigValuePtr("misc:swallow_exception_regex")->strValue;
 
     auto               PMONITOR = g_pCompositor->m_pLastMonitor;
     const auto         PWORKSPACE =
@@ -116,6 +117,9 @@ void Events::listener_mapWindow(void* owner, void* data) {
     bool requestsMaximize = false;
     bool shouldFocus      = true;
     bool workspaceSpecial = false;
+
+    PWINDOW->m_szInitialTitle = g_pXWaylandManager->getTitle(PWINDOW);
+    PWINDOW->m_szInitialClass = g_pXWaylandManager->getAppIDClass(PWINDOW);
 
     for (auto& r : WINDOWRULES) {
         if (r.szRule.find("monitor") == 0) {
@@ -550,8 +554,10 @@ void Events::listener_mapWindow(void* owner, void* data) {
                 }
 
                 if (finalFound) {
-                    // check if it's the window we want
-                    if (std::regex_match(g_pXWaylandManager->getAppIDClass(finalFound), rgx)) {
+                    std::regex exc(*PSWALLOWEXREGEX);
+                    // check if it's the window we want & not exempt from getting swallowed
+                    if (std::regex_match(g_pXWaylandManager->getAppIDClass(finalFound), rgx) &&
+                        !std::regex_match(g_pXWaylandManager->getTitle(finalFound), exc)) {
                         // swallow
                         PWINDOW->m_pSwallowed = finalFound;
 
@@ -634,6 +640,8 @@ void Events::listener_unmapWindow(void* owner, void* data) {
         wasLastWindow                = true;
         g_pCompositor->m_pLastWindow = nullptr;
         g_pCompositor->m_pLastFocus  = nullptr;
+
+        g_pInputManager->releaseAllMouseButtons();
     }
 
     PWINDOW->m_bMappedX11 = false;

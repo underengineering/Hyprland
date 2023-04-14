@@ -385,7 +385,8 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
             unsetCursorImage();
         }
 
-        if (pFoundLayerSurface && (pFoundLayerSurface->layerSurface->current.keyboard_interactive || pFoundLayerSurface->layer >= ZWLR_LAYER_SHELL_V1_LAYER_TOP) &&
+        if (pFoundLayerSurface &&
+            (pFoundLayerSurface->layerSurface->current.keyboard_interactive || (pFoundLayerSurface->layer >= ZWLR_LAYER_SHELL_V1_LAYER_TOP && !g_pCompositor->m_pLastWindow)) &&
             FOLLOWMOUSE != 3 && allowKeyboardRefocus) {
             g_pCompositor->focusSurface(foundSurface);
         }
@@ -519,8 +520,17 @@ void CInputManager::processMouseDownNormal(wlr_pointer_button_event* e) {
             if (*PFOLLOWMOUSE == 3) // don't refocus on full loose
                 break;
 
-            if (!g_pCompositor->m_sSeat.mouse || !g_pCompositor->m_sSeat.mouse->currentConstraint)
-                refocus();
+            if (!g_pCompositor->m_sSeat.mouse || !g_pCompositor->m_sSeat.mouse->currentConstraint) {
+                // a bit hacky
+                // if we only pressed one button, allow us to refocus. m_lCurrentlyHeldButtons.size() > 0 will stick the focus
+                if (m_lCurrentlyHeldButtons.size() == 1) {
+                    const auto COPY = m_lCurrentlyHeldButtons;
+                    m_lCurrentlyHeldButtons.clear();
+                    refocus();
+                    m_lCurrentlyHeldButtons = COPY;
+                } else
+                    refocus();
+            }
 
             // if clicked on a floating window make it top
             if (g_pCompositor->m_pLastWindow && g_pCompositor->m_pLastWindow->m_bIsFloating)
@@ -1453,14 +1463,19 @@ void CInputManager::setCursorIconOnBorder(CWindow* w) {
         return;
     }
 
-    static auto* const PROUNDING   = &g_pConfigManager->getConfigValuePtr("decoration:rounding")->intValue;
-    static const auto* PBORDERSIZE = &g_pConfigManager->getConfigValuePtr("general:border_size")->intValue;
+    static auto* const PROUNDING         = &g_pConfigManager->getConfigValuePtr("decoration:rounding")->intValue;
+    static const auto* PBORDERSIZE       = &g_pConfigManager->getConfigValuePtr("general:border_size")->intValue;
+    static const auto* PEXTENDBORDERGRAB = &g_pConfigManager->getConfigValuePtr("general:extend_border_grab_area")->intValue;
     // give a small leeway (10 px) for corner icon
-    const auto           CORNER      = *PROUNDING + *PBORDERSIZE + 10;
-    const auto           mouseCoords = getMouseCoordsInternal();
-    wlr_box              box         = {w->m_vRealPosition.vec().x, w->m_vRealPosition.vec().y, w->m_vRealSize.vec().x, w->m_vRealSize.vec().y};
-    eBorderIconDirection direction   = BORDERICON_NONE;
-    if (wlr_box_contains_point(&box, mouseCoords.x, mouseCoords.y)) {
+    const auto           CORNER           = *PROUNDING + *PBORDERSIZE + 10;
+    const auto           mouseCoords      = getMouseCoordsInternal();
+    wlr_box              box              = {w->m_vRealPosition.vec().x, w->m_vRealPosition.vec().y, w->m_vRealSize.vec().x, w->m_vRealSize.vec().y};
+    eBorderIconDirection direction        = BORDERICON_NONE;
+    wlr_box              boxFullGrabInput = {box.x - *PEXTENDBORDERGRAB, box.y - *PEXTENDBORDERGRAB, box.width + 2 * *PEXTENDBORDERGRAB, box.height + 2 * *PEXTENDBORDERGRAB};
+
+    if (!wlr_box_contains_point(&boxFullGrabInput, mouseCoords.x, mouseCoords.y) || (!m_lCurrentlyHeldButtons.empty() && !currentlyDraggedWindow)) {
+        direction = BORDERICON_NONE;
+    } else if (wlr_box_contains_point(&box, mouseCoords.x, mouseCoords.y)) {
         if (!w->isInCurvedCorner(mouseCoords.x, mouseCoords.y)) {
             direction = BORDERICON_NONE;
         } else {

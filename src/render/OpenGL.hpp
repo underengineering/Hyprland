@@ -29,6 +29,11 @@ enum eDiscardMode
     DISCARD_ALPHAZERO = 1 << 1
 };
 
+struct SRenderModifData {
+    Vector2D translate = {};
+    float    scale     = 1.f;
+};
+
 struct SMonitorRenderData {
     CFramebuffer primaryFB;
     CFramebuffer mirrorFB;     // these are used for some effects,
@@ -55,16 +60,20 @@ struct SMonitorRenderData {
     CShader m_shBLUR2;
     CShader m_shSHADOW;
     CShader m_shBORDER1;
+    CShader m_shGLITCH;
     //
 };
 
 struct SCurrentRenderData {
     CMonitor*           pMonitor = nullptr;
     float               projection[9];
+    float               savedProjection[9];
 
     SMonitorRenderData* pCurrentMonData = nullptr;
 
     pixman_region32_t*  pDamage = nullptr;
+
+    SRenderModifData    renderModif;
 
     Vector2D            primarySurfaceUVTopLeft     = Vector2D(-1, -1);
     Vector2D            primarySurfaceUVBottomRight = Vector2D(-1, -1);
@@ -90,6 +99,10 @@ class CHyprOpenGLImpl {
     void                                       renderTextureWithBlur(const CTexture&, wlr_box*, float a, wlr_surface* pSurface, int round = 0, bool blockBlurOptimization = false);
     void                                       renderRoundedShadow(wlr_box*, int round, int range, float a = 1.0);
     void                                       renderBorder(wlr_box*, const CGradientValueData&, int round, float a = 1.0);
+
+    void                                       saveMatrix();
+    void                                       setMatrixScaleTranslate(const Vector2D& translate, const float& scale);
+    void                                       restoreMatrix();
 
     void                                       makeWindowSnapshot(CWindow*);
     void                                       makeRawWindowSnapshot(CWindow*, CFramebuffer*);

@@ -12,15 +12,15 @@
 #include <sys/types.h>
 #include <sys/un.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
 
 #include <string>
 
 CEventManager::CEventManager() {}
 
 int fdHandleWrite(int fd, uint32_t mask, void* data) {
-    if (mask & WL_EVENT_ERROR || mask & WL_EVENT_HANGUP) {
-        // remove, hanged up
-        const auto ACCEPTEDFDS = (std::vector<std::pair<int, wl_event_source*>>*)data;
+    auto removeFD = [&](int fd) -> void {
+        const auto ACCEPTEDFDS = (std::deque<std::pair<int, wl_event_source*>>*)data;
         for (auto it = ACCEPTEDFDS->begin(); it != ACCEPTEDFDS->end();) {
             if (it->first == fd) {
                 wl_event_source_remove(it->second); // remove this fd listener
@@ -29,6 +29,27 @@ int fdHandleWrite(int fd, uint32_t mask, void* data) {
                 it++;
             }
         }
+    };
+
+    if (mask & WL_EVENT_ERROR || mask & WL_EVENT_HANGUP) {
+        // remove, hanged up
+        removeFD(fd);
+        return 0;
+    }
+
+    int availableBytes;
+    if (ioctl(fd, FIONREAD, &availableBytes) == -1) {
+        Debug::log(ERR, "fd %d sent invalid data (1)", fd);
+        removeFD(fd);
+        return 0;
+    }
+
+    char       buf[availableBytes];
+    const auto RECEIVED = recv(fd, buf, availableBytes, 0);
+    if (RECEIVED == -1) {
+        Debug::log(ERR, "fd %d sent invalid data (2)", fd);
+        removeFD(fd);
+        return 0;
     }
 
     return 0;

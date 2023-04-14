@@ -47,8 +47,11 @@ class CWorkspace {
     CWindow* m_pLastFocusedWindow = nullptr;
 
     // user-set
-    bool     m_bDefaultFloating = false;
-    bool     m_bDefaultPseudo   = false;
+    bool m_bDefaultFloating = false;
+    bool m_bDefaultPseudo   = false;
+
+    // don't destroy in sanity check
+    bool     m_bIndestructible = false;
 
     void     startAnim(bool in, bool left, bool instant = false);
     void     setActive(bool on);
@@ -56,4 +59,5 @@ class CWorkspace {
     void     moveToMonitor(const int&);
 
     CWindow* getLastFocusedWindow();
+    void     rememberPrevWorkspace(const CWorkspace* prevWorkspace);
 };

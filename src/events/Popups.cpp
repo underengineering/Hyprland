@@ -164,6 +164,9 @@ void Events::listener_mapPopupXDG(void* owner, void* data) {
 
     g_pHyprRenderer->damageBox(lx - extents.x, ly - extents.y, extents.width + 2, extents.height + 2);
 
+    if (PPOPUP->monitor)
+        g_pProtocolManager->m_pFractionalScaleProtocolManager->setPreferredScaleForSurface(PPOPUP->popup->base->surface, PPOPUP->monitor->scale);
+
     Debug::log(LOG, "XDG Popup got assigned a surfaceTreeNode %x", PPOPUP->pSurfaceTree);
 }
 
@@ -172,6 +175,9 @@ void Events::listener_unmapPopupXDG(void* owner, void* data) {
     Debug::log(LOG, "XDG Popup unmapped");
 
     ASSERT(PPOPUP);
+
+    if (PPOPUP->popup->base->surface == g_pCompositor->m_pLastFocus)
+        g_pInputManager->releaseAllMouseButtons();
 
     SubsurfaceTree::destroySurfaceTree(PPOPUP->pSurfaceTree);
 

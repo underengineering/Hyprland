@@ -63,6 +63,7 @@ void CConfigManager::setDefaultVars() {
     ((CGradientValueData*)configValues["general:col.group_border_active"].data.get())->reset(0x66ffff00);
     configValues["general:cursor_inactive_timeout"].intValue = 0;
     configValues["general:no_cursor_warps"].intValue         = 0;
+    configValues["general:no_focus_fallback"].intValue       = 0;
     configValues["general:resize_on_border"].intValue        = 0;
     configValues["general:extend_border_grab_area"].intValue = 15;
     configValues["general:hover_icon_on_border"].intValue    = 1;
@@ -81,6 +82,7 @@ void CConfigManager::setDefaultVars() {
     configValues["misc:disable_autoreload"].intValue           = 0;
     configValues["misc:enable_swallow"].intValue               = 0;
     configValues["misc:swallow_regex"].strValue                = STRVAL_EMPTY;
+    configValues["misc:swallow_exception_regex"].strValue      = STRVAL_EMPTY;
     configValues["misc:focus_on_activate"].intValue            = 0;
     configValues["misc:no_direct_scanout"].intValue            = 1;
     configValues["misc:hide_cursor_on_touch"].intValue         = 1;
@@ -97,6 +99,7 @@ void CConfigManager::setDefaultVars() {
     configValues["debug:disable_time"].intValue       = 1;
     configValues["debug:enable_stdout_logs"].intValue = 0;
     configValues["debug:damage_tracking"].intValue    = DAMAGE_TRACKING_FULL;
+    configValues["debug:manual_crash"].intValue       = 0;
 
     configValues["decoration:rounding"].intValue               = 0;
     configValues["decoration:blur"].intValue                   = 1;
@@ -141,6 +144,7 @@ void CConfigManager::setDefaultVars() {
     configValues["master:no_gaps_when_only"].intValue      = 0;
     configValues["master:orientation"].strValue            = "left";
     configValues["master:inherit_fullscreen"].intValue     = 1;
+    configValues["master:allow_small_split"].intValue      = 0;
 
     configValues["animations:enabled"].intValue = 1;
 
@@ -1160,6 +1164,18 @@ std::string CConfigManager::parseKeyword(const std::string& COMMAND, const std::
         // Update window border colors
         g_pCompositor->updateAllWindowsAnimatedDecorationValues();
 
+        // manual crash
+        if (configValues["debug:manual_crash"].intValue && !m_bManualCrashInitiated) {
+            m_bManualCrashInitiated = true;
+            if (g_pHyprNotificationOverlay) {
+                g_pHyprNotificationOverlay->addNotification("Manual crash has been set up. Set debug:manual_crash back to 0 in order to crash the compositor.", CColor(0), 5000,
+                                                            ICON_INFO);
+            }
+        } else if (m_bManualCrashInitiated && !configValues["debug:manual_crash"].intValue) {
+            // cowabunga it is
+            g_pHyprRenderer->initiateManualCrash();
+        }
+
         return retval;
     }
 
@@ -1387,7 +1403,7 @@ void CConfigManager::loadConfigLoadVars() {
     if (!isFirstLaunch && !m_bNoMonitorReload) {
         // check
         performMonitorReload();
-        ensureDPMS();
+        ensureMonitorStatus();
         ensureVRR();
     }
 
@@ -1396,6 +1412,15 @@ void CConfigManager::loadConfigLoadVars() {
 
     // update layout
     g_pLayoutManager->switchToLayout(configValues["general:layout"].strValue);
+
+    // manual crash
+    if (configValues["debug:manual_crash"].intValue && !m_bManualCrashInitiated) {
+        m_bManualCrashInitiated = true;
+        g_pHyprNotificationOverlay->addNotification("Manual crash has been set up. Set debug:manual_crash back to 0 in order to crash the compositor.", CColor(0), 5000, ICON_INFO);
+    } else if (m_bManualCrashInitiated && !configValues["debug:manual_crash"].intValue) {
+        // cowabunga it is
+        g_pHyprRenderer->initiateManualCrash();
+    }
 
     Debug::disableStdout = !configValues["debug:enable_stdout_logs"].intValue;
 
@@ -1432,7 +1457,7 @@ void CConfigManager::tick() {
         int         err = stat(cf.c_str(), &fileStat);
         if (err != 0) {
             Debug::log(WARN, "Error at ticking config at %s, error %i: %s", cf.c_str(), err, strerror(err));
-            return;
+            continue;
         }
 
         // check if we need to reload cfg
@@ -1791,7 +1816,7 @@ bool CConfigManager::shouldBlurLS(const std::string& ns) {
     return false;
 }
 
-void CConfigManager::ensureDPMS() {
+void CConfigManager::ensureMonitorStatus() {
     for (auto& rm : g_pCompositor->m_vRealMonitors) {
         if (!rm->output)
             continue;
