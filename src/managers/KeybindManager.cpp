@@ -807,7 +807,7 @@ void CKeybindManager::changeworkspace(std::string args) {
 
     auto pWorkspaceToChangeTo = g_pCompositor->getWorkspaceByID(workspaceToChangeTo);
     if (!pWorkspaceToChangeTo)
-        pWorkspaceToChangeTo = g_pCompositor->createNewWorkspace(workspaceToChangeTo, PMONITOR->ID);
+        pWorkspaceToChangeTo = g_pCompositor->createNewWorkspace(workspaceToChangeTo, PMONITOR->ID, workspaceName);
 
     if (pWorkspaceToChangeTo->m_bIsSpecialWorkspace) {
         PMONITOR->setSpecialWorkspace(pWorkspaceToChangeTo);
@@ -876,14 +876,16 @@ void CKeybindManager::moveActiveToWorkspace(std::string args) {
 
     auto pWorkspace = g_pCompositor->getWorkspaceByID(WORKSPACEID);
 
+    g_pHyprRenderer->damageWindow(PWINDOW);
+
     if (pWorkspace) {
         g_pCompositor->moveWindowToWorkspaceSafe(PWINDOW, pWorkspace);
         const auto PMONITOR = g_pCompositor->getMonitorFromID(pWorkspace->m_iMonitorID);
         g_pCompositor->setActiveMonitor(PMONITOR);
         PMONITOR->changeWorkspace(pWorkspace);
     } else {
-        const auto PMONITOR = g_pCompositor->getMonitorFromID(PWINDOW->m_iMonitorID);
         pWorkspace          = g_pCompositor->createNewWorkspace(WORKSPACEID, PWINDOW->m_iMonitorID, workspaceName);
+        const auto PMONITOR = g_pCompositor->getMonitorFromID(pWorkspace->m_iMonitorID);
         g_pCompositor->moveWindowToWorkspaceSafe(PWINDOW, pWorkspace);
         PMONITOR->changeWorkspace(pWorkspace);
     }
@@ -918,6 +920,8 @@ void CKeybindManager::moveActiveToWorkspaceSilent(std::string args) {
 
     if (WORKSPACEID == PWINDOW->m_iWorkspaceID)
         return;
+
+    g_pHyprRenderer->damageWindow(PWINDOW);
 
     auto       pWorkspace = g_pCompositor->getWorkspaceByID(WORKSPACEID);
     const auto OLDMIDDLE  = PWINDOW->middle();
@@ -1447,9 +1451,9 @@ void CKeybindManager::toggleSpecialWorkspace(std::string args) {
     }
 
     if (requestedWorkspaceIsAlreadyOpen && specialOpenOnMonitor == workspaceID)
-        Debug::log(LOG, "Toggling special workspace %d to closed");
+        Debug::log(LOG, "Toggling special workspace %d to closed", workspaceID);
     else
-        Debug::log(LOG, "Toggling special workspace %d to open");
+        Debug::log(LOG, "Toggling special workspace %d to open", workspaceID);
 
     if (requestedWorkspaceIsAlreadyOpen && specialOpenOnMonitor == workspaceID) {
         // already open on this monitor

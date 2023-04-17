@@ -299,11 +299,23 @@ void CMonitor::onDisconnect() {
 }
 
 void CMonitor::addDamage(const pixman_region32_t* rg) {
+    static auto* const PZOOMFACTOR = &g_pConfigManager->getConfigValuePtr("misc:cursor_zoom_factor")->floatValue;
+    if (*PZOOMFACTOR != 1.f && g_pCompositor->getMonitorFromCursor() == this) {
+        wlr_damage_ring_add_whole(&damage);
+        g_pCompositor->scheduleFrameForMonitor(this);
+    }
+
     if (wlr_damage_ring_add(&damage, rg))
         g_pCompositor->scheduleFrameForMonitor(this);
 }
 
 void CMonitor::addDamage(const wlr_box* box) {
+    static auto* const PZOOMFACTOR = &g_pConfigManager->getConfigValuePtr("misc:cursor_zoom_factor")->floatValue;
+    if (*PZOOMFACTOR != 1.f && g_pCompositor->getMonitorFromCursor() == this) {
+        wlr_damage_ring_add_whole(&damage);
+        g_pCompositor->scheduleFrameForMonitor(this);
+    }
+
     if (wlr_damage_ring_add_box(&damage, box))
         g_pCompositor->scheduleFrameForMonitor(this);
 }
@@ -480,16 +492,16 @@ void CMonitor::changeWorkspace(CWorkspace* const pWorkspace, bool internal) {
     if (!pWorkspace)
         return;
 
+    if (pWorkspace->m_bIsSpecialWorkspace) {
+        Debug::log(ERR, "BUG THIS: Attempted to changeWorkspace to special!");
+        return;
+    }
+
     if (pWorkspace->m_iID == activeWorkspace) {
         // in some cases (e.g. workspace from one monitor to another)
         // we need to send this
         g_pCompositor->deactivateAllWLRWorkspaces(pWorkspace->m_pWlrHandle);
         pWorkspace->setActive(true);
-        return;
-    }
-
-    if (pWorkspace->m_bIsSpecialWorkspace) {
-        Debug::log(ERR, "BUG THIS: Attempted to changeWorkspace to special!");
         return;
     }
 
@@ -516,12 +528,16 @@ void CMonitor::changeWorkspace(CWorkspace* const pWorkspace, bool internal) {
             g_pInputManager->refocus();
         }
 
+        g_pLayoutManager->getCurrentLayout()->recalculateMonitor(ID);
+
         // set some flags and fire event
         g_pCompositor->deactivateAllWLRWorkspaces(pWorkspace->m_pWlrHandle);
         pWorkspace->setActive(true);
         g_pEventManager->postEvent(SHyprIPCEvent{"workspace", pWorkspace->m_szName});
         EMIT_HOOK_EVENT("workspace", pWorkspace);
     }
+
+    g_pHyprRenderer->damageMonitor(this);
 }
 
 void CMonitor::changeWorkspace(const int& id, bool internal) {
@@ -529,6 +545,8 @@ void CMonitor::changeWorkspace(const int& id, bool internal) {
 }
 
 void CMonitor::setSpecialWorkspace(CWorkspace* const pWorkspace) {
+    g_pHyprRenderer->damageMonitor(this);
+
     if (!pWorkspace) {
         // remove special if exists
         if (const auto EXISTINGSPECIAL = g_pCompositor->getWorkspaceByID(specialWorkspaceID); EXISTINGSPECIAL)
