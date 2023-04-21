@@ -785,8 +785,8 @@ bool windowRuleValid(const std::string& RULE) {
     return !(RULE != "float" && RULE != "tile" && RULE.find("opacity") != 0 && RULE.find("move") != 0 && RULE.find("size") != 0 && RULE.find("minsize") != 0 &&
              RULE.find("maxsize") != 0 && RULE.find("pseudo") != 0 && RULE.find("monitor") != 0 && RULE.find("idleinhibit") != 0 && RULE != "nofocus" && RULE != "noblur" &&
              RULE != "noshadow" && RULE != "noborder" && RULE != "center" && RULE != "opaque" && RULE != "forceinput" && RULE != "fullscreen" && RULE != "nofullscreenrequest" &&
-             RULE != "nomaxsize" && RULE != "pin" && RULE != "noanim" && RULE != "dimaround" && RULE != "windowdance" && RULE != "maximize" && RULE.find("animation") != 0 &&
-             RULE.find("rounding") != 0 && RULE.find("workspace") != 0 && RULE.find("bordercolor") != 0 && RULE != "forcergbx");
+             RULE != "fakefullscreen" && RULE != "nomaxsize" && RULE != "pin" && RULE != "noanim" && RULE != "dimaround" && RULE != "windowdance" && RULE != "maximize" &&
+             RULE.find("animation") != 0 && RULE.find("rounding") != 0 && RULE.find("workspace") != 0 && RULE.find("bordercolor") != 0 && RULE != "forcergbx");
 }
 
 bool layerRuleValid(const std::string& RULE) {
@@ -976,7 +976,7 @@ void CConfigManager::updateBlurredLS(const std::string& name, const bool forceBl
         for (auto& lsl : m->m_aLayerSurfaceLayers) {
             for (auto& ls : lsl) {
                 if (BYADDRESS) {
-                    if (getFormat("0x%x", ls.get()) == matchName)
+                    if (getFormat("0x%lx", ls.get()) == matchName)
                         ls->forceBlur = forceBlur;
                 } else if (ls->szNamespace == matchName)
                     ls->forceBlur = forceBlur;
@@ -1668,23 +1668,27 @@ std::vector<SWindowRule> CConfigManager::getMatchingRules(CWindow* pWindow) {
         }
 
         // applies. Read the rule and behave accordingly
-        Debug::log(LOG, "Window rule %s -> %s matched %x [%s]", rule.szRule.c_str(), rule.szValue.c_str(), pWindow, pWindow->m_szTitle.c_str());
+        Debug::log(LOG, "Window rule %s -> %s matched %lx [%s]", rule.szRule.c_str(), rule.szValue.c_str(), pWindow, pWindow->m_szTitle.c_str());
 
         returns.push_back(rule);
     }
 
-    const uint64_t PID          = pWindow->getPID();
-    bool           anyExecFound = false;
+    std::vector<uint64_t> PIDs = {(uint64_t)pWindow->getPID()};
+    while (getPPIDof(PIDs.back()) > 10)
+        PIDs.push_back(getPPIDof(PIDs.back()));
+
+    bool anyExecFound = false;
 
     for (auto& er : execRequestedRules) {
-        if (er.iPid == PID) {
+        if (std::ranges::any_of(PIDs, [&](const auto& pid) { return pid == er.iPid; })) {
             returns.push_back({er.szRule, "execRule"});
             anyExecFound = true;
         }
     }
 
     if (anyExecFound) // remove exec rules to unclog searches in the future, why have the garbage here.
-        execRequestedRules.erase(std::remove_if(execRequestedRules.begin(), execRequestedRules.end(), [&](const SExecRequestedRule& other) { return other.iPid == PID; }));
+        execRequestedRules.erase(std::remove_if(execRequestedRules.begin(), execRequestedRules.end(),
+                                                [&](const SExecRequestedRule& other) { return std::ranges::any_of(PIDs, [&](const auto& pid) { return pid == other.iPid; }); }));
 
     return returns;
 }
@@ -1697,7 +1701,7 @@ std::vector<SLayerRule> CConfigManager::getMatchingRules(SLayerSurface* pLS) {
 
     for (auto& lr : m_dLayerRules) {
         if (lr.targetNamespace.find("address:0x") == 0) {
-            if (getFormat("address:0x%x", pLS) != lr.targetNamespace)
+            if (getFormat("address:0x%lx", pLS) != lr.targetNamespace)
                 continue;
         } else {
             std::regex NSCHECK(lr.targetNamespace);

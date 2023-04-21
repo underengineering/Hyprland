@@ -132,7 +132,7 @@ void CMonitor::onConnect(bool noRule) {
 
     wlr_xcursor_manager_load(g_pCompositor->m_sWLRXCursorMgr, scale);
 
-    Debug::log(LOG, "Added new monitor with name %s at %i,%i with size %ix%i, pointer %x", output->name, (int)vecPosition.x, (int)vecPosition.y, (int)vecPixelSize.x,
+    Debug::log(LOG, "Added new monitor with name %s at %i,%i with size %ix%i, pointer %lx", output->name, (int)vecPosition.x, (int)vecPosition.y, (int)vecPixelSize.x,
                (int)vecPixelSize.y, output);
 
     // add a WLR workspace group
@@ -565,7 +565,8 @@ void CMonitor::setSpecialWorkspace(CWorkspace* const pWorkspace) {
     }
 
     // open special
-    specialWorkspaceID = pWorkspace->m_iID;
+    pWorkspace->m_iMonitorID = ID;
+    specialWorkspaceID       = pWorkspace->m_iID;
     pWorkspace->startAnim(true, true);
 
     g_pLayoutManager->getCurrentLayout()->recalculateMonitor(ID);

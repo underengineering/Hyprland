@@ -124,6 +124,8 @@ bool CHyprRenderer::shouldRenderWindow(CWindow* pWindow) {
 void CHyprRenderer::renderWorkspaceWithFullscreenWindow(CMonitor* pMonitor, CWorkspace* pWorkspace, timespec* time) {
     CWindow* pWorkspaceWindow = nullptr;
 
+    EMIT_HOOK_EVENT("render", RENDER_PRE_WINDOWS);
+
     // loop over the tiled windows that are fading out
     for (auto& w : g_pCompositor->m_vWindows) {
         if (w->m_iWorkspaceID != pMonitor->activeWorkspace)
@@ -200,6 +202,8 @@ void CHyprRenderer::renderWorkspaceWithFullscreenWindow(CMonitor* pMonitor, CWor
             // render the bad boy
             renderWindow(w.get(), pMonitor, time, true, RENDER_PASS_ALL);
         }
+
+    EMIT_HOOK_EVENT("render", RENDER_POST_WINDOWS);
 
     // and the overlay layers
     for (auto& ls : pMonitor->m_aLayerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_TOP]) {
@@ -457,6 +461,8 @@ void CHyprRenderer::renderAllClientsForWorkspace(CMonitor* pMonitor, CWorkspace*
 
     CWindow* lastWindow = nullptr;
 
+    EMIT_HOOK_EVENT("render", RENDER_PRE_WINDOWS);
+
     // Non-floating main
     for (auto& w : g_pCompositor->m_vWindows) {
         if (w->isHidden() && !w->m_bIsMapped && !w->m_bFadingOut)
@@ -569,6 +575,8 @@ void CHyprRenderer::renderAllClientsForWorkspace(CMonitor* pMonitor, CWorkspace*
         // render the bad boy
         renderWindow(w.get(), pMonitor, time, true, RENDER_PASS_ALL);
     }
+
+    EMIT_HOOK_EVENT("render", RENDER_POST_WINDOWS);
 
     // Render surfaces above windows for monitor
     for (auto& ls : pMonitor->m_aLayerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_TOP]) {
@@ -747,7 +755,7 @@ bool CHyprRenderer::attemptDirectScanout(CMonitor* pMonitor) {
     if (wlr_output_commit(pMonitor->output)) {
         if (!m_pLastScanout) {
             m_pLastScanout = PCANDIDATE;
-            Debug::log(LOG, "Entered a direct scanout to %x: \"%s\"", PCANDIDATE, PCANDIDATE->m_szTitle.c_str());
+            Debug::log(LOG, "Entered a direct scanout to %lx: \"%s\"", PCANDIDATE, PCANDIDATE->m_szTitle.c_str());
         }
     } else {
         m_pLastScanout = nullptr;
@@ -842,6 +850,8 @@ void CHyprRenderer::renderMonitor(CMonitor* pMonitor) {
         return;
     }
 
+    EMIT_HOOK_EVENT("render", RENDER_PRE);
+
     const bool UNLOCK_SC = g_pHyprRenderer->m_bSoftwareCursorsLocked;
     if (UNLOCK_SC)
         wlr_output_lock_software_cursors(pMonitor->output, true);
@@ -902,8 +912,11 @@ void CHyprRenderer::renderMonitor(CMonitor* pMonitor) {
 
     g_pHyprOpenGL->begin(pMonitor, &damage);
 
+    EMIT_HOOK_EVENT("render", RENDER_BEGIN);
+
     if (pMonitor->isMirror()) {
         g_pHyprOpenGL->renderMirrored();
+        EMIT_HOOK_EVENT("render", RENDER_POST_MIRROR);
     } else {
         g_pHyprOpenGL->clear(CColor(17.0 / 255.0, 17.0 / 255.0, 17.0 / 255.0, 1.0));
         g_pHyprOpenGL->clearWithTex(); // will apply the hypr "wallpaper"
@@ -950,6 +963,9 @@ void CHyprRenderer::renderMonitor(CMonitor* pMonitor) {
         g_pHyprOpenGL->m_RenderData.mouseZoomFactor = std::clamp(*PZOOMFACTOR, 1.f, INFINITY);
     else
         g_pHyprOpenGL->m_RenderData.mouseZoomFactor = 1.f;
+
+    EMIT_HOOK_EVENT("render", RENDER_LAST_MOMENT);
+
     g_pHyprOpenGL->end();
 
     // calc frame damage
@@ -973,6 +989,8 @@ void CHyprRenderer::renderMonitor(CMonitor* pMonitor) {
     pixman_region32_fini(&frameDamage);
 
     pMonitor->renderingActive = false;
+
+    EMIT_HOOK_EVENT("render", RENDER_POST);
 
     wlr_damage_ring_rotate(&pMonitor->damage);
 
@@ -1010,7 +1028,6 @@ void CHyprRenderer::renderMonitor(CMonitor* pMonitor) {
 }
 
 void CHyprRenderer::renderWorkspace(CMonitor* pMonitor, CWorkspace* pWorkspace, timespec* now, const wlr_box& geometry) {
-
     Vector2D translate = {geometry.x, geometry.y};
     float    scale     = (float)geometry.width / pMonitor->vecPixelSize.x;
 
@@ -1020,7 +1037,9 @@ void CHyprRenderer::renderWorkspace(CMonitor* pMonitor, CWorkspace* pWorkspace, 
         translate = Vector2D{};
     }
 
+    g_pHyprOpenGL->m_RenderData.pWorkspace = pWorkspace;
     renderAllClientsForWorkspace(pMonitor, pWorkspace, now, translate, scale);
+    g_pHyprOpenGL->m_RenderData.pWorkspace = nullptr;
 }
 
 void CHyprRenderer::setWindowScanoutMode(CWindow* pWindow) {
@@ -1029,7 +1048,7 @@ void CHyprRenderer::setWindowScanoutMode(CWindow* pWindow) {
 
     if (!pWindow->m_bIsFullscreen) {
         wlr_linux_dmabuf_v1_set_surface_feedback(g_pCompositor->m_sWLRLinuxDMABuf, pWindow->m_pWLSurface.wlr(), nullptr);
-        Debug::log(LOG, "Scanout mode OFF set for %x", pWindow);
+        Debug::log(LOG, "Scanout mode OFF set for %lx", pWindow);
         return;
     }
 
@@ -1048,7 +1067,7 @@ void CHyprRenderer::setWindowScanoutMode(CWindow* pWindow) {
     wlr_linux_dmabuf_v1_set_surface_feedback(g_pCompositor->m_sWLRLinuxDMABuf, pWindow->m_pWLSurface.wlr(), &feedback);
     wlr_linux_dmabuf_feedback_v1_finish(&feedback);
 
-    Debug::log(LOG, "Scanout mode ON set for %x", pWindow);
+    Debug::log(LOG, "Scanout mode ON set for %lx", pWindow);
 }
 
 void CHyprRenderer::outputMgrApplyTest(wlr_output_configuration_v1* config, bool test) {
@@ -1237,7 +1256,7 @@ void CHyprRenderer::arrangeLayerArray(CMonitor* pMonitor, const std::vector<std:
             box.y -= PSTATE->margin.bottom;
         }
         if (box.width <= 0 || box.height <= 0) {
-            Debug::log(ERR, "LayerSurface %x has a negative/zero w/h???", ls.get());
+            Debug::log(ERR, "LayerSurface %lx has a negative/zero w/h???", ls.get());
             continue;
         }
         // Apply
@@ -1247,7 +1266,7 @@ void CHyprRenderer::arrangeLayerArray(CMonitor* pMonitor, const std::vector<std:
 
         wlr_layer_surface_v1_configure(ls->layerSurface, box.width, box.height);
 
-        Debug::log(LOG, "LayerSurface %x arranged: x: %i y: %i w: %i h: %i with margins: t: %i l: %i r: %i b: %i", &ls, box.x, box.y, box.width, box.height, PSTATE->margin.top,
+        Debug::log(LOG, "LayerSurface %lx arranged: x: %i y: %i w: %i h: %i with margins: t: %i l: %i r: %i b: %i", &ls, box.x, box.y, box.width, box.height, PSTATE->margin.top,
                    PSTATE->margin.left, PSTATE->margin.right, PSTATE->margin.bottom);
     }
 }
