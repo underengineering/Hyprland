@@ -24,7 +24,7 @@ class CEventManager {
     std::thread m_tThread;
 
   private:
-    std::vector<std::pair<int, wl_event_source*>> m_dAcceptedSocketFDs;
+    std::vector<std::pair<int, wl_event_source*>> m_vAcceptedSocketFDs;
 };
 
 inline std::unique_ptr<CEventManager> g_pEventManager;

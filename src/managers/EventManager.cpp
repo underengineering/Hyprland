@@ -94,8 +94,8 @@ void CEventManager::startThread() {
                 Debug::log(LOG, "Socket 2 accepted a new client at FD %d", ACCEPTEDCONNECTION);
 
                 // add to event loop so we can close it when we need to
-                m_dAcceptedSocketFDs.push_back(
-                    {ACCEPTEDCONNECTION, wl_event_loop_add_fd(g_pCompositor->m_sWLEventLoop, ACCEPTEDCONNECTION, WL_EVENT_READABLE, fdHandleWrite, &m_dAcceptedSocketFDs)});
+                m_vAcceptedSocketFDs.push_back(
+                    {ACCEPTEDCONNECTION, wl_event_loop_add_fd(g_pCompositor->m_sWLEventLoop, ACCEPTEDCONNECTION, WL_EVENT_READABLE, fdHandleWrite, &m_vAcceptedSocketFDs)});
             }
         }
 
@@ -112,7 +112,7 @@ void CEventManager::postEvent(const SHyprIPCEvent event, bool force) {
     }
 
     std::string eventString = (event.event + ">>" + event.data).substr(0, 1022) + "\n";
-    for (auto& fd : m_dAcceptedSocketFDs) {
+    for (auto& fd : m_vAcceptedSocketFDs) {
         ssize_t written = write(fd.first, eventString.c_str(), eventString.length());
         if (written != (ssize_t)eventString.length()) {
             Debug::log(WARN, "Written %ll bytes out of %ll expected to Socket2 fd %d", written, eventString.length(), fd.first);
