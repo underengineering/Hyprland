@@ -20,7 +20,7 @@ CEventManager::CEventManager() {}
 
 int fdHandleWrite(int fd, uint32_t mask, void* data) {
     auto removeFD = [&](int fd) -> void {
-        const auto ACCEPTEDFDS = (std::deque<std::pair<int, wl_event_source*>>*)data;
+        const auto ACCEPTEDFDS = (std::vector<std::pair<int, wl_event_source*>>*)data;
         for (auto it = ACCEPTEDFDS->begin(); it != ACCEPTEDFDS->end();) {
             if (it->first == fd) {
                 wl_event_source_remove(it->second); // remove this fd listener
