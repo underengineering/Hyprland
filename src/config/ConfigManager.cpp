@@ -151,6 +151,7 @@ void CConfigManager::setDefaultVars() {
     configValues["animations:enabled"].intValue = 1;
 
     configValues["input:follow_mouse"].intValue                     = 1;
+    configValues["input:mouse_refocus"].intValue                    = 1;
     configValues["input:sensitivity"].floatValue                    = 0.f;
     configValues["input:accel_profile"].strValue                    = STRVAL_EMPTY;
     configValues["input:kb_file"].strValue                          = STRVAL_EMPTY;
@@ -786,7 +787,8 @@ bool windowRuleValid(const std::string& RULE) {
              RULE.find("maxsize") != 0 && RULE.find("pseudo") != 0 && RULE.find("monitor") != 0 && RULE.find("idleinhibit") != 0 && RULE != "nofocus" && RULE != "noblur" &&
              RULE != "noshadow" && RULE != "noborder" && RULE != "center" && RULE != "opaque" && RULE != "forceinput" && RULE != "fullscreen" && RULE != "nofullscreenrequest" &&
              RULE != "fakefullscreen" && RULE != "nomaxsize" && RULE != "pin" && RULE != "noanim" && RULE != "dimaround" && RULE != "windowdance" && RULE != "maximize" &&
-             RULE.find("animation") != 0 && RULE.find("rounding") != 0 && RULE.find("workspace") != 0 && RULE.find("bordercolor") != 0 && RULE != "forcergbx");
+             RULE.find("animation") != 0 && RULE.find("rounding") != 0 && RULE.find("workspace") != 0 && RULE.find("bordercolor") != 0 && RULE != "forcergbx" &&
+             RULE != "noinitialfocus");
 }
 
 bool layerRuleValid(const std::string& RULE) {
