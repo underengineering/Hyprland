@@ -49,13 +49,17 @@ install:
 	cp ./assets/wall_8K.png ${PREFIX}/share/hyprland
 
 	install -Dm644 -t ${PREFIX}/share/man/man1 ./docs/*.1
-	mkdir -p ${PREFIX}/include/hyprland
 
+	mkdir -p ${PREFIX}/include/hyprland
 	mkdir -p ${PREFIX}/include/hyprland/protocols
+	mkdir -p ${PREFIX}/include/hyprland/wlroots
 	mkdir -p ${PREFIX}/share/pkgconfig
+	
 	find src -name '*.h*' -exec cp --parents '{}' ${PREFIX}/include/hyprland ';'
+	cd subprojects/wlroots/include && find . -name '*.h*' -exec cp --parents '{}' ${PREFIX}/include/hyprland/wlroots ';' && cd ../../..
 	cp ./protocols/*-protocol.h ${PREFIX}/include/hyprland/protocols
 	cp ./build/hyprland.pc ${PREFIX}/share/pkgconfig
+	cp ./build/hyprland.pc /usr/share/pkgconfig
 
 cleaninstall:
 	echo -en "make cleaninstall has been DEPRECATED, you should avoid using it in the future.\nRunning make install instead...\n"
@@ -92,6 +96,19 @@ pluginenv:
 
 	meson setup subprojects/wlroots/build subprojects/wlroots --prefix=${PREFIX} --buildtype=release -Dwerror=false -Dexamples=false
 	ninja -C subprojects/wlroots/build/
+
+	cmake --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Release -S . -B ./build -G Ninja
+
+	mkdir -p ${PREFIX}/include/hyprland
+	mkdir -p ${PREFIX}/include/hyprland/protocols
+	mkdir -p ${PREFIX}/include/hyprland/wlroots
+	mkdir -p ${PREFIX}/share/pkgconfig
+	
+	find src -name '*.h*' -exec cp --parents '{}' ${PREFIX}/include/hyprland ';'
+	cd subprojects/wlroots/include && find . -name '*.h*' -exec cp --parents '{}' ${PREFIX}/include/hyprland/wlroots ';' && cd ../../..
+	cp ./protocols/*-protocol.h ${PREFIX}/include/hyprland/protocols
+	cp ./build/hyprland.pc ${PREFIX}/share/pkgconfig
+	cp ./build/hyprland.pc /usr/share/pkgconfig
 
 configdebug:
 	make fixwlr

@@ -181,7 +181,7 @@ void CHyprRenderer::renderWorkspaceWithFullscreenWindow(CMonitor* pMonitor, CWor
 
     // then render windows over fullscreen.
     for (auto& w : g_pCompositor->m_vWindows) {
-        if (w->m_iWorkspaceID != pWorkspaceWindow->m_iWorkspaceID || (!w->m_bCreatedOverFullscreen && !w->m_bPinned) || !w->m_bIsMapped)
+        if (w->m_iWorkspaceID != pWorkspaceWindow->m_iWorkspaceID || (!w->m_bCreatedOverFullscreen && !w->m_bPinned) || (!w->m_bIsMapped && !w->m_bFadingOut))
             continue;
 
         renderWindow(w.get(), pMonitor, time, true, RENDER_PASS_ALL);
@@ -444,7 +444,7 @@ void CHyprRenderer::renderAllClientsForWorkspace(CMonitor* pMonitor, CWorkspace*
     // TODO: check better with solitary after MR for tearing.
     const auto PFULLWINDOW = g_pCompositor->getFullscreenWindowOnWorkspace(pWorkspace->m_iID);
     if (!pWorkspace->m_bHasFullscreenWindow || pWorkspace->m_efFullscreenMode != FULLSCREEN_FULL || !PFULLWINDOW || PFULLWINDOW->m_vRealSize.isBeingAnimated() ||
-        !PFULLWINDOW->opaque()) {
+        !PFULLWINDOW->opaque() || pWorkspace->m_vRenderOffset.isBeingAnimated() || PFULLWINDOW->m_fAlpha.fl() != 1.f || PFULLWINDOW->m_fActiveInactiveAlpha.fl() != 1.f) {
         for (auto& ls : pMonitor->m_aLayerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND]) {
             renderLayer(ls.get(), pMonitor, time);
         }
@@ -788,6 +788,20 @@ void CHyprRenderer::renderMonitor(CMonitor* pMonitor) {
     if (!*PDAMAGEBLINK)
         damageBlinkCleanup = 0;
 
+    static bool firstLaunch = true;
+
+    float       zoomInFactorFirstLaunch = 1.f;
+
+    if (firstLaunch) {
+        firstLaunch = false;
+        m_tRenderTimer.reset();
+    }
+
+    if (m_tRenderTimer.getSeconds() < 1.5f) { // TODO: make the animation system more damage-flexible so that this can be migrated to there
+        zoomInFactorFirstLaunch = 2.f - g_pAnimationManager->getBezier("default")->getYForPoint(m_tRenderTimer.getSeconds() / 1.5);
+        damageMonitor(pMonitor);
+    }
+
     startRender = std::chrono::high_resolution_clock::now();
 
     if (*PDEBUGOVERLAY == 1) {
@@ -969,6 +983,12 @@ void CHyprRenderer::renderMonitor(CMonitor* pMonitor) {
         g_pHyprOpenGL->m_RenderData.mouseZoomFactor = std::clamp(*PZOOMFACTOR, 1.f, INFINITY);
     else
         g_pHyprOpenGL->m_RenderData.mouseZoomFactor = 1.f;
+
+    if (zoomInFactorFirstLaunch > 1.f) {
+        g_pHyprOpenGL->m_RenderData.mouseZoomFactor    = zoomInFactorFirstLaunch;
+        g_pHyprOpenGL->m_RenderData.mouseZoomUseMouse  = false;
+        g_pHyprOpenGL->m_RenderData.useNearestNeighbor = false;
+    }
 
     EMIT_HOOK_EVENT("render", RENDER_LAST_MOMENT);
 

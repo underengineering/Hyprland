@@ -1869,33 +1869,35 @@ void CCompositor::moveWorkspaceToMonitor(CWorkspace* pWorkspace, CMonitor* pMoni
 
     // fix old mon
     int nextWorkspaceOnMonitorID = -1;
-    for (auto& w : m_vWorkspaces) {
-        if (w->m_iMonitorID == POLDMON->ID && w->m_iID != pWorkspace->m_iID && !w->m_bIsSpecialWorkspace) {
-            nextWorkspaceOnMonitorID = w->m_iID;
-            break;
+    if (!SWITCHINGISACTIVE)
+        nextWorkspaceOnMonitorID = pWorkspace->m_iID;
+    else {
+        for (auto& w : m_vWorkspaces) {
+            if (w->m_iMonitorID == POLDMON->ID && w->m_iID != pWorkspace->m_iID && !w->m_bIsSpecialWorkspace) {
+                nextWorkspaceOnMonitorID = w->m_iID;
+                break;
+            }
         }
+
+        if (nextWorkspaceOnMonitorID == -1) {
+            nextWorkspaceOnMonitorID = 1;
+
+            while (getWorkspaceByID(nextWorkspaceOnMonitorID) || [&]() -> bool {
+                const auto B = g_pConfigManager->getBoundMonitorForWS(std::to_string(nextWorkspaceOnMonitorID));
+                return B && B != POLDMON;
+            }())
+                nextWorkspaceOnMonitorID++;
+
+            Debug::log(LOG, "moveWorkspaceToMonitor: Plugging gap with new %d", nextWorkspaceOnMonitorID);
+
+            g_pCompositor->createNewWorkspace(nextWorkspaceOnMonitorID, POLDMON->ID);
+        }
+
+        Debug::log(LOG, "moveWorkspaceToMonitor: Plugging gap with existing %d", nextWorkspaceOnMonitorID);
+        POLDMON->changeWorkspace(nextWorkspaceOnMonitorID);
     }
-
-    if (nextWorkspaceOnMonitorID == -1) {
-        nextWorkspaceOnMonitorID = 1;
-
-        while (getWorkspaceByID(nextWorkspaceOnMonitorID) || [&]() -> bool {
-            const auto B = g_pConfigManager->getBoundMonitorForWS(std::to_string(nextWorkspaceOnMonitorID));
-            return B && B != POLDMON;
-        }())
-            nextWorkspaceOnMonitorID++;
-
-        Debug::log(LOG, "moveWorkspaceToMonitor: Plugging gap with new %d", nextWorkspaceOnMonitorID);
-
-        g_pCompositor->createNewWorkspace(nextWorkspaceOnMonitorID, POLDMON->ID);
-    }
-
-    Debug::log(LOG, "moveWorkspaceToMonitor: Plugging gap with existing %d", nextWorkspaceOnMonitorID);
-
-    POLDMON->changeWorkspace(nextWorkspaceOnMonitorID);
 
     // move the workspace
-
     pWorkspace->m_iMonitorID = pMonitor->ID;
     pWorkspace->moveToMonitor(pMonitor->ID);
 
@@ -1923,7 +1925,7 @@ void CCompositor::moveWorkspaceToMonitor(CWorkspace* pWorkspace, CMonitor* pMoni
         }
     }
 
-    if (SWITCHINGISACTIVE) { // if it was active, preserve its' status. If it wasn't, don't.
+    if (SWITCHINGISACTIVE && POLDMON == g_pCompositor->m_pLastMonitor) { // if it was active, preserve its' status. If it wasn't, don't.
         Debug::log(LOG, "moveWorkspaceToMonitor: SWITCHINGISACTIVE, active %d -> %d", pMonitor->activeWorkspace, pWorkspace->m_iID);
 
         if (const auto PWORKSPACE = getWorkspaceByID(pMonitor->activeWorkspace); PWORKSPACE)
@@ -2346,7 +2348,8 @@ void CCompositor::moveWindowToWorkspaceSafe(CWindow* pWindow, CWorkspace* pWorks
     if (!pWindow || !pWorkspace)
         return;
 
-    const bool FULLSCREEN = pWindow->m_bIsFullscreen;
+    const bool FULLSCREEN     = pWindow->m_bIsFullscreen;
+    const auto FULLSCREENMODE = getWorkspaceByID(pWindow->m_iWorkspaceID)->m_efFullscreenMode;
 
     if (FULLSCREEN)
         setWindowFullscreen(pWindow, false, FULLSCREEN_FULL);
@@ -2372,5 +2375,5 @@ void CCompositor::moveWindowToWorkspaceSafe(CWindow* pWindow, CWorkspace* pWorks
     }
 
     if (FULLSCREEN)
-        setWindowFullscreen(pWindow, true, FULLSCREEN_FULL);
+        setWindowFullscreen(pWindow, true, FULLSCREENMODE);
 }
