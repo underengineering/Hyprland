@@ -337,6 +337,12 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
         m_pFoundSurfaceToFocus = foundSurface;
     }
 
+    if (currentlyDraggedWindow && pFoundWindow != currentlyDraggedWindow) {
+        wlr_seat_pointer_notify_enter(g_pCompositor->m_sSeat.seat, foundSurface, surfaceLocal.x, surfaceLocal.y);
+        wlr_seat_pointer_notify_motion(g_pCompositor->m_sSeat.seat, time, surfaceLocal.x, surfaceLocal.y);
+        return;
+    }
+
     if (pFoundWindow) {
         // change cursor icon if hovering over border
         if (*PRESIZEONBORDER && *PRESIZECURSORICON) {
@@ -949,6 +955,19 @@ void CInputManager::setPointerConfigs() {
                 libinput_device_config_accel_set_profile(LIBINPUTDEV, LIBINPUT_CONFIG_ACCEL_PROFILE_ADAPTIVE);
             } else if (ACCELPROFILE == "flat") {
                 libinput_device_config_accel_set_profile(LIBINPUTDEV, LIBINPUT_CONFIG_ACCEL_PROFILE_FLAT);
+            } else if (ACCELPROFILE.find("custom") == 0) {
+                CVarList args = {ACCELPROFILE, 0, ' '};
+                try {
+                    double              step = std::stod(args[1]);
+                    std::vector<double> points;
+                    for (size_t i = 2; i < args.size(); ++i)
+                        points.push_back(std::stod(args[i]));
+
+                    const auto CONFIG = libinput_config_accel_create(LIBINPUT_CONFIG_ACCEL_PROFILE_CUSTOM);
+                    libinput_config_accel_set_points(CONFIG, LIBINPUT_ACCEL_TYPE_MOTION, step, points.size(), points.data());
+                    libinput_device_config_accel_set_profile(LIBINPUTDEV, LIBINPUT_CONFIG_ACCEL_PROFILE_CUSTOM);
+                    libinput_config_accel_destroy(CONFIG);
+                } catch (std::exception& e) { Debug::log(ERR, "Invalid values in custom accel profile"); }
             } else {
                 Debug::log(WARN, "Unknown acceleration profile, falling back to default");
             }

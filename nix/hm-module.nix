@@ -51,6 +51,15 @@ in {
       '';
     };
 
+    plugins = lib.mkOption {
+      type = with lib.types; listOf (either package path);
+      default = [];
+      description = lib.mdDoc ''
+        List of hyprlad plugins to use. Can either be packages or
+        absolute plugin paths.
+      '';
+    };
+
     systemdIntegration = lib.mkOption {
       type = lib.types.bool;
       default = pkgs.stdenv.isLinux;
@@ -107,6 +116,13 @@ in {
   };
 
   config = lib.mkIf cfg.enable {
+    warnings =
+      if (cfg.systemdIntegration || cfg.plugins != []) && cfg.extraConfig == null then
+        [ ''You have enabled hyprland.systemdIntegration or listed plugins in hyprland.plugins.
+            Your hyprland config will be linked by home manager.
+            Set hyprland.extraConfig or unset hyprland.systemdIntegration and hyprland.plugins to remove this warning.'' ]
+      else [];
+
     home.packages =
       lib.optional (cfg.package != null) cfg.package
       ++ lib.optional cfg.xwayland.enable pkgs.xwayland;
@@ -114,12 +130,15 @@ in {
     home.sessionVariables =
       lib.mkIf cfg.recommendedEnvironment {NIXOS_OZONE_WL = "1";};
 
-    xdg.configFile."hypr/hyprland.conf" = lib.mkIf (cfg.extraConfig != null) {
+    xdg.configFile."hypr/hyprland.conf" = lib.mkIf (cfg.systemdIntegration || cfg.extraConfig != null || cfg.plugins != []) {
       text =
         (lib.optionalString cfg.systemdIntegration ''
           exec-once=${pkgs.dbus}/bin/dbus-update-activation-environment --systemd DISPLAY WAYLAND_DISPLAY HYPRLAND_INSTANCE_SIGNATURE XDG_CURRENT_DESKTOP && systemctl --user start hyprland-session.target
         '')
-        + cfg.extraConfig;
+        + lib.concatStrings (builtins.map (entry: let
+            plugin = if lib.types.package.check entry then "${entry}/lib/lib${entry.pname}.so" else entry;
+          in "plugin = ${plugin}\n") cfg.plugins)
+        + (if cfg.extraConfig != null then cfg.extraConfig else "");
 
       onChange = let
         hyprlandPackage =

@@ -248,9 +248,6 @@ void CCompositor::initServer() {
     wlr_multi_backend_add(m_sWLRBackend, m_sWLRHeadlessBackend);
 
     initManagers(STAGE_LATE);
-
-    Debug::log(LOG, "Disabling stdout logs! Check the log for further logs.");
-    Debug::disableStdout = true;
 }
 
 void CCompositor::initAllSignals() {
@@ -402,6 +399,7 @@ void CCompositor::initManagers(eManagersInitStage stage) {
 
             Debug::log(LOG, "Creating the PluginSystem!");
             g_pPluginSystem = std::make_unique<CPluginSystem>();
+            g_pConfigManager->handlePluginLoads();
         } break;
         default: UNREACHABLE();
     }

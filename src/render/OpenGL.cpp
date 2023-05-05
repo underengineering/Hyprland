@@ -980,7 +980,8 @@ void CHyprOpenGLImpl::renderTextureWithBlur(const CTexture& tex, wlr_box* pBox, 
     wlr_region_scale(&inverseOpaque, &inverseOpaque, m_RenderData.pMonitor->scale);
 
     //                                                                        vvv TODO: layered blur fbs?
-    const bool    USENEWOPTIMIZE = (*PBLURNEWOPTIMIZE && !blockBlurOptimization && ((m_pCurrentWindow && !m_pCurrentWindow->m_bIsFloating) || *PBLURXRAY) &&
+    const bool    USENEWOPTIMIZE = (*PBLURNEWOPTIMIZE && !blockBlurOptimization &&
+                                 ((m_pCurrentWindow && !m_pCurrentWindow->m_bIsFloating && !g_pCompositor->isWorkspaceSpecial(m_pCurrentWindow->m_iWorkspaceID)) || *PBLURXRAY) &&
                                  m_RenderData.pCurrentMonData->blurFB.m_cTex.m_iTexID);
 
     CFramebuffer* POUTFB = nullptr;
@@ -1051,14 +1052,13 @@ void pushVert2D(float x, float y, float* arr, int& counter, wlr_box* box) {
     counter++;
 }
 
-void CHyprOpenGLImpl::renderBorder(wlr_box* box, const CGradientValueData& grad, int round, float a) {
+void CHyprOpenGLImpl::renderBorder(wlr_box* box, const CGradientValueData& grad, int round, int borderSize, float a) {
     RASSERT((box->width > 0 && box->height > 0), "Tried to render rect with width/height < 0!");
     RASSERT(m_RenderData.pMonitor, "Tried to render rect without begin()!");
 
     if (!pixman_region32_not_empty(m_RenderData.pDamage) || (m_pCurrentWindow && m_pCurrentWindow->m_sAdditionalConfigData.forceNoBorder))
         return;
 
-    static auto* const PBORDERSIZE  = &g_pConfigManager->getConfigValuePtr("general:border_size")->intValue;
     static auto* const PMULTISAMPLE = &g_pConfigManager->getConfigValuePtr("decoration:multisample_edges")->intValue;
 
     wlr_box            newBox = *box;
@@ -1068,10 +1068,10 @@ void CHyprOpenGLImpl::renderBorder(wlr_box* box, const CGradientValueData& grad,
 
     box = &newBox;
 
-    if (*PBORDERSIZE < 1)
+    if (borderSize < 1)
         return;
 
-    int scaledBorderSize = *PBORDERSIZE * m_RenderData.pMonitor->scale * m_RenderData.renderModif.scale;
+    int scaledBorderSize = borderSize * m_RenderData.pMonitor->scale * m_RenderData.renderModif.scale;
 
     // adjust box
     box->x -= scaledBorderSize;
