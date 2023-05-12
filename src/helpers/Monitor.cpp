@@ -145,7 +145,7 @@ void CMonitor::onConnect(bool noRule) {
     setupDefaultWS(monitorRule);
 
     for (auto& ws : g_pCompositor->m_vWorkspaces) {
-        if (ws->m_szLastMonitor == szName) {
+        if (ws->m_szLastMonitor == szName || g_pCompositor->m_vMonitors.size() == 1 /* avoid lost workspaces on recover */) {
             g_pCompositor->moveWorkspaceToMonitor(ws.get(), this);
             ws->startAnim(true, true, true);
             ws->m_szLastMonitor = "";
@@ -577,6 +577,11 @@ void CMonitor::setSpecialWorkspace(CWorkspace* const pWorkspace) {
             g_pInputManager->refocus();
 
         return;
+    }
+
+    if (specialWorkspaceID) {
+        if (const auto EXISTINGSPECIAL = g_pCompositor->getWorkspaceByID(specialWorkspaceID); EXISTINGSPECIAL)
+            EXISTINGSPECIAL->startAnim(false, false);
     }
 
     // open special

@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <regex>
 #include <optional>
+#include <xf86drmMode.h>
 #include "../Window.hpp"
 #include "../helpers/WLClasses.hpp"
 
@@ -44,6 +45,7 @@ struct SMonitorRule {
     wl_output_transform transform   = WL_OUTPUT_TRANSFORM_NORMAL;
     std::string         mirrorOf    = "";
     bool                enable10bit = false;
+    drmModeModeInfo     drmMode     = {};
 };
 
 struct SWorkspaceRule {
@@ -86,12 +88,23 @@ struct SExecRequestedRule {
 
 class CVarList {
   public:
+    /* passing 's' as a separator will use std::isspace */
     CVarList(const std::string& in, long unsigned int lastArgNo = 0, const char separator = ',') {
-        std::string curitem = "";
-        std::string argZ    = in;
+        std::string curitem  = "";
+        std::string argZ     = in;
+        const bool  SPACESEP = separator == 's';
 
         auto        nextItem = [&]() {
-            auto idx = lastArgNo != 0 && m_vArgs.size() >= lastArgNo - 1 ? std::string::npos : argZ.find_first_of(separator);
+            auto idx = lastArgNo != 0 && m_vArgs.size() >= lastArgNo - 1 ? std::string::npos : ([&]() -> size_t {
+                if (!SPACESEP)
+                    return argZ.find_first_of(separator);
+
+                uint64_t pos = -1;
+                while (!std::isspace(argZ[++pos]) && pos < argZ.length())
+                    ;
+
+                return pos < argZ.length() ? pos : std::string::npos;
+            }());
 
             if (idx != std::string::npos) {
                 curitem = argZ.substr(0, idx);
@@ -169,6 +182,7 @@ class CConfigManager {
 
     CMonitor*                                                       getBoundMonitorForWS(const std::string&);
     std::string                                                     getBoundMonitorStringForWS(const std::string&);
+    const std::deque<SWorkspaceRule>&                               getAllWorkspaceRules();
 
     std::vector<SWindowRule>                                        getMatchingRules(CWindow*);
     std::vector<SLayerRule>                                         getMatchingRules(SLayerSurface*);

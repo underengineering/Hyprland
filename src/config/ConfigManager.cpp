@@ -130,14 +130,15 @@ void CConfigManager::setDefaultVars() {
     configValues["decoration:dim_around"].floatValue           = 0.4f;
     configValues["decoration:screen_shader"].strValue          = STRVAL_EMPTY;
 
-    configValues["dwindle:pseudotile"].intValue               = 0;
-    configValues["dwindle:force_split"].intValue              = 0;
-    configValues["dwindle:preserve_split"].intValue           = 0;
-    configValues["dwindle:special_scale_factor"].floatValue   = 0.8f;
-    configValues["dwindle:split_width_multiplier"].floatValue = 1.0f;
-    configValues["dwindle:no_gaps_when_only"].intValue        = 0;
-    configValues["dwindle:use_active_for_splits"].intValue    = 1;
-    configValues["dwindle:default_split_ratio"].floatValue    = 1.f;
+    configValues["dwindle:pseudotile"].intValue                   = 0;
+    configValues["dwindle:force_split"].intValue                  = 0;
+    configValues["dwindle:permanent_direction_override"].intValue = 0;
+    configValues["dwindle:preserve_split"].intValue               = 0;
+    configValues["dwindle:special_scale_factor"].floatValue       = 0.8f;
+    configValues["dwindle:split_width_multiplier"].floatValue     = 1.0f;
+    configValues["dwindle:no_gaps_when_only"].intValue            = 0;
+    configValues["dwindle:use_active_for_splits"].intValue        = 1;
+    configValues["dwindle:default_split_ratio"].floatValue        = 1.f;
 
     configValues["master:special_scale_factor"].floatValue = 0.8f;
     configValues["master:mfact"].floatValue                = 0.55f;
@@ -469,6 +470,58 @@ void CConfigManager::handleRawExec(const std::string& command, const std::string
     g_pKeybindManager->spawn(args);
 }
 
+static bool parseModeLine(const std::string& modeline, drmModeModeInfo& mode) {
+    auto args = CVarList(modeline, 0, 's');
+
+    auto keyword = args[0];
+    std::transform(keyword.begin(), keyword.end(), keyword.begin(), ::tolower);
+
+    if (keyword != "modeline")
+        return false;
+
+    if (args.size() < 10) {
+        Debug::log(ERR, "modeline parse error: expected at least 9 arguments, got %i", args.size() - 1);
+        return false;
+    }
+
+    int argno = 1;
+
+    mode.type        = DRM_MODE_TYPE_USERDEF;
+    mode.clock       = std::stof(args[argno++]) * 1000;
+    mode.hdisplay    = std::stoi(args[argno++]);
+    mode.hsync_start = std::stoi(args[argno++]);
+    mode.hsync_end   = std::stoi(args[argno++]);
+    mode.htotal      = std::stoi(args[argno++]);
+    mode.vdisplay    = std::stoi(args[argno++]);
+    mode.vsync_start = std::stoi(args[argno++]);
+    mode.vsync_end   = std::stoi(args[argno++]);
+    mode.vtotal      = std::stoi(args[argno++]);
+    mode.vrefresh    = mode.clock * 1000.0 * 1000.0 / mode.htotal / mode.vtotal;
+
+    static std::unordered_map<std::string, uint32_t> flagsmap = {
+        {"+hsync", DRM_MODE_FLAG_PHSYNC},
+        {"-hsync", DRM_MODE_FLAG_NHSYNC},
+        {"+vsync", DRM_MODE_FLAG_PVSYNC},
+        {"-vsync", DRM_MODE_FLAG_NVSYNC},
+    };
+
+    for (; argno < static_cast<int>(args.size()); argno++) {
+        auto key = args[argno];
+        std::transform(key.begin(), key.end(), key.begin(), ::tolower);
+
+        auto it = flagsmap.find(key);
+
+        if (it != flagsmap.end())
+            mode.flags |= it->second;
+        else
+            Debug::log(ERR, "invalid flag %s in modeline", it->first.c_str());
+    }
+
+    snprintf(mode.name, sizeof(mode.name), "%dx%d@%d", mode.hdisplay, mode.vdisplay, mode.vrefresh / 1000);
+
+    return true;
+}
+
 void CConfigManager::handleMonitor(const std::string& command, const std::string& args) {
 
     // get the monitor config
@@ -530,6 +583,9 @@ void CConfigManager::handleMonitor(const std::string& command, const std::string
         newrule.resolution = Vector2D(-1, -1);
     } else if (ARGS[1].find("highres") == 0) {
         newrule.resolution = Vector2D(-1, -2);
+    } else if (parseModeLine(ARGS[1], newrule.drmMode)) {
+        newrule.resolution  = Vector2D(newrule.drmMode.hdisplay, newrule.drmMode.vdisplay);
+        newrule.refreshRate = newrule.drmMode.vrefresh / 1000;
     } else {
         newrule.resolution.x = stoi(ARGS[1].substr(0, ARGS[1].find_first_of('x')));
         newrule.resolution.y = stoi(ARGS[1].substr(ARGS[1].find_first_of('x') + 1, ARGS[1].find_first_of('@')));
@@ -1054,7 +1110,7 @@ void CConfigManager::handleWorkspaceRules(const std::string& command, const std:
         else if ((delim = rule.find("monitor:")) != std::string::npos)
             wsRule.monitor = rule.substr(delim + 8);
         else if ((delim = rule.find("default:")) != std::string::npos)
-            wsRule.isDefault = configStringToInt(rule.substr(delim + 9));
+            wsRule.isDefault = configStringToInt(rule.substr(delim + 8));
     };
 
     size_t      pos = 0;
@@ -1069,7 +1125,12 @@ void CConfigManager::handleWorkspaceRules(const std::string& command, const std:
     wsRule.workspaceId   = id;
     wsRule.workspaceName = name;
 
-    m_dWorkspaceRules.emplace_back(wsRule);
+    const auto IT = std::find_if(m_dWorkspaceRules.begin(), m_dWorkspaceRules.end(), [&](const auto& other) { return other.workspaceString == wsRule.workspaceString; });
+
+    if (IT == m_dWorkspaceRules.end())
+        m_dWorkspaceRules.emplace_back(wsRule);
+    else
+        *IT = wsRule;
 }
 
 void CConfigManager::handleSubmap(const std::string& command, const std::string& submap) {
@@ -2023,6 +2084,10 @@ std::string CConfigManager::getBoundMonitorStringForWS(const std::string& wsname
     }
 
     return "";
+}
+
+const std::deque<SWorkspaceRule>& CConfigManager::getAllWorkspaceRules() {
+    return m_dWorkspaceRules;
 }
 
 void CConfigManager::addExecRule(const SExecRequestedRule& rule) {
