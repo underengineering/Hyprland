@@ -113,9 +113,11 @@ void CEventManager::postEvent(const SHyprIPCEvent event, bool force) {
 
     std::string eventString = (event.event + ">>" + event.data).substr(0, 1022) + "\n";
     for (auto& fd : m_vAcceptedSocketFDs) {
-        ssize_t written = write(fd.first, eventString.c_str(), eventString.length());
-        if (written != (ssize_t)eventString.length()) {
-            Debug::log(WARN, "Written %ll bytes out of %ll expected to Socket2 fd %d", written, eventString.length(), fd.first);
-        }
+        try {
+            ssize_t written = write(fd.first, eventString.c_str(), eventString.length());
+            if (written != (ssize_t)eventString.length()) {
+                Debug::log(WARN, "Written %ll bytes out of %ll expected to Socket2 fd %d", written, eventString.length(), fd.first);
+            }
+        } catch (...) {}
     }
 }

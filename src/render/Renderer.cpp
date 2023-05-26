@@ -282,6 +282,8 @@ void CHyprRenderer::renderWindow(CWindow* pWindow, CMonitor* pMonitor, timespec*
 
     g_pHyprOpenGL->m_pCurrentWindow = pWindow;
 
+    EMIT_HOOK_EVENT("render", RENDER_PRE_WINDOW);
+
     if (*PDIMAROUND && pWindow->m_sAdditionalConfigData.dimAround && !m_bRenderingSnapshot && mode != RENDER_PASS_POPUP) {
         wlr_box monbox = {0, 0, g_pHyprOpenGL->m_RenderData.pMonitor->vecTransformedSize.x, g_pHyprOpenGL->m_RenderData.pMonitor->vecTransformedSize.y};
         g_pHyprOpenGL->renderRect(&monbox, CColor(0, 0, 0, *PDIMAROUND * renderdata.alpha * renderdata.fadeAlpha));
@@ -368,6 +370,8 @@ void CHyprRenderer::renderWindow(CWindow* pWindow, CMonitor* pMonitor, timespec*
             wlr_xdg_surface_for_each_popup_surface(pWindow->m_uSurface.xdg, renderSurface, &renderdata);
         }
     }
+
+    EMIT_HOOK_EVENT("render", RENDER_POST_WINDOW);
 
     g_pHyprOpenGL->m_pCurrentWindow     = nullptr;
     g_pHyprOpenGL->m_RenderData.clipBox = {0, 0, 0, 0};
@@ -791,7 +795,8 @@ void CHyprRenderer::renderMonitor(CMonitor* pMonitor) {
     if (!*PDAMAGEBLINK)
         damageBlinkCleanup = 0;
 
-    static bool firstLaunch = true;
+    static bool firstLaunch           = true;
+    static bool firstLaunchAnimActive = true;
 
     float       zoomInFactorFirstLaunch = 1.f;
 
@@ -800,9 +805,11 @@ void CHyprRenderer::renderMonitor(CMonitor* pMonitor) {
         m_tRenderTimer.reset();
     }
 
-    if (m_tRenderTimer.getSeconds() < 1.5f) { // TODO: make the animation system more damage-flexible so that this can be migrated to there
+    if (m_tRenderTimer.getSeconds() < 1.5f && firstLaunchAnimActive) { // TODO: make the animation system more damage-flexible so that this can be migrated to there
         zoomInFactorFirstLaunch = 2.f - g_pAnimationManager->getBezier("default")->getYForPoint(m_tRenderTimer.getSeconds() / 1.5);
         damageMonitor(pMonitor);
+    } else {
+        firstLaunchAnimActive = false;
     }
 
     startRender = std::chrono::high_resolution_clock::now();

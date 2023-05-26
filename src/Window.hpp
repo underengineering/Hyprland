@@ -10,7 +10,8 @@
 #include "helpers/Vector2D.hpp"
 #include "helpers/WLSurface.hpp"
 
-enum eIdleInhibitMode {
+enum eIdleInhibitMode
+{
     IDLEINHIBIT_NONE = 0,
     IDLEINHIBIT_ALWAYS,
     IDLEINHIBIT_FULLSCREEN,
@@ -188,7 +189,7 @@ class CWindow {
     bool        m_bIsPseudotiled = false;
     Vector2D    m_vPseudoSize    = Vector2D(0, 0);
 
-    uint64_t    m_iTags          = 0;
+    bool        m_bFirstMap      = false; // for layouts
     bool        m_bIsFloating    = false;
     bool        m_bDraggingTiled = false; // for dragging around tiled windows
     bool        m_bIsFullscreen  = false;

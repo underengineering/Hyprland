@@ -101,7 +101,7 @@ void CHyprMasterLayout::onWindowCreatedTiling(CWindow* pWindow) {
         return;
     }
 
-    if (*PNEWISMASTER || WINDOWSONWORKSPACE == 1) {
+    if (*PNEWISMASTER || WINDOWSONWORKSPACE == 1 || (!pWindow->m_bFirstMap && OPENINGON->isMaster)) {
         for (auto& nd : m_lMasterNodesData) {
             if (nd.isMaster && nd.workspaceID == PNODE->workspaceID) {
                 nd.isMaster      = false;
@@ -199,7 +199,11 @@ void CHyprMasterLayout::onWindowRemovedTiling(CWindow* pWindow) {
 }
 
 void CHyprMasterLayout::recalculateMonitor(const int& monid) {
-    const auto PMONITOR   = g_pCompositor->getMonitorFromID(monid);
+    const auto PMONITOR = g_pCompositor->getMonitorFromID(monid);
+
+    if (!PMONITOR)
+        return;
+
     const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(PMONITOR->activeWorkspace);
 
     if (!PWORKSPACE)
