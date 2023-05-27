@@ -545,16 +545,16 @@ void logSystemInfo() {
 
     Debug::log(NONE, "\n");
 
-#if defined(__DragonFly__) || defined(__FreeBSD__)
-    const std::string GPUINFO = execAndGet("pciconf -lv | fgrep -A4 vga");
-#else
-    const std::string GPUINFO = execAndGet("lspci -vnn | grep VGA");
-#endif
-    Debug::log(LOG, "GPU information:\n%s\n", GPUINFO.c_str());
-
-    if (GPUINFO.contains("NVIDIA")) {
-        Debug::log(WARN, "Warning: you're using an NVIDIA GPU. Make sure you follow the instructions on the wiki if anything is amiss.\n");
-    }
+    // #if defined(__DragonFly__) || defined(__FreeBSD__)
+    //     const std::string GPUINFO = execAndGet("pciconf -lv | fgrep -A4 vga");
+    // #else
+    //     const std::string GPUINFO = execAndGet("lspci -vnn | grep VGA");
+    // #endif
+    //     Debug::log(LOG, "GPU information:\n%s\n", GPUINFO.c_str());
+    //
+    //     if (GPUINFO.contains("NVIDIA")) {
+    //         Debug::log(WARN, "Warning: you're using an NVIDIA GPU. Make sure you follow the instructions on the wiki if anything is amiss.\n");
+    //     }
 
     // log etc
     Debug::log(LOG, "os-release:");
