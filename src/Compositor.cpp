@@ -1665,7 +1665,7 @@ void CCompositor::updateWindowAnimatedDecorationValues(CWindow* pWindow) {
     }
 
     // dim
-    if (pWindow == m_pLastWindow) {
+    if (pWindow == m_pLastWindow || pWindow->m_sAdditionalConfigData.forceNoDim) {
         pWindow->m_fDimPercent = 0;
     } else {
         pWindow->m_fDimPercent = *PDIMSTRENGTH;
@@ -2350,6 +2350,9 @@ void CCompositor::performUserChecks() {
 
 void CCompositor::moveWindowToWorkspaceSafe(CWindow* pWindow, CWorkspace* pWorkspace) {
     if (!pWindow || !pWorkspace)
+        return;
+
+    if (pWindow->m_bPinned && pWorkspace->m_bIsSpecialWorkspace)
         return;
 
     const bool FULLSCREEN     = pWindow->m_bIsFullscreen;
