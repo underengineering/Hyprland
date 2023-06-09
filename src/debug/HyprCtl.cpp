@@ -990,12 +990,17 @@ std::string dispatchSetProp(std::string request) {
             PWINDOW->m_sSpecialRenderData.inactiveBorderColor.forceSetIgnoreLocked(configStringToInt(VAL), lock);
         } else if (PROP == "forcergbx") {
             PWINDOW->m_sAdditionalConfigData.forceRGBX.forceSetIgnoreLocked(configStringToInt(VAL), lock);
+        } else if (PROP == "bordersize") {
+            PWINDOW->m_sSpecialRenderData.borderSize.forceSetIgnoreLocked(configStringToInt(VAL), lock);
         } else {
             return "prop not found";
         }
     } catch (std::exception& e) { return "error in parsing prop value: " + std::string(e.what()); }
 
     g_pCompositor->updateAllWindowsAnimatedDecorationValues();
+
+    for (auto& m : g_pCompositor->m_vMonitors)
+        g_pLayoutManager->getCurrentLayout()->recalculateMonitor(m->ID);
 
     return "ok";
 }

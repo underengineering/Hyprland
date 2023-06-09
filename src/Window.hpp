@@ -100,10 +100,10 @@ struct SWindowSpecialRenderData {
     CWindowOverridableVar<int64_t> inactiveBorderColor = -1; // -1 means unset
 
     // set by the layout
-    int  borderSize = -1;
-    bool rounding   = true;
-    bool border     = true;
-    bool decorate   = true;
+    CWindowOverridableVar<int> borderSize = -1; // -1 means unset
+    bool                       rounding   = true;
+    bool                       border     = true;
+    bool                       decorate   = true;
 };
 
 struct SWindowAdditionalConfigData {
@@ -159,6 +159,8 @@ class CWindow {
     DYNLISTENER(toplevelActivate);
     DYNLISTENER(toplevelFullscreen);
     DYNLISTENER(setOverrideRedirect);
+    DYNLISTENER(associateX11);
+    DYNLISTENER(dissociateX11);
     // DYNLISTENER(newSubsurfaceWindow);
 
     CWLSurface            m_pWLSurface;

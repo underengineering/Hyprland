@@ -816,6 +816,7 @@ void CKeybindManager::changeworkspace(std::string args) {
 
     if (pWorkspaceToChangeTo->m_bIsSpecialWorkspace) {
         PMONITOR->setSpecialWorkspace(pWorkspaceToChangeTo);
+        g_pInputManager->simulateMouseMovement();
         return;
     }
 
@@ -839,6 +840,8 @@ void CKeybindManager::changeworkspace(std::string args) {
     }
 
     pWorkspaceToChangeTo->m_sPrevWorkspace = {PCURRENTWORKSPACE->m_iID, PCURRENTWORKSPACE->m_szName};
+
+    g_pInputManager->simulateMouseMovement();
 }
 
 void CKeybindManager::fullscreenActive(std::string args) {
@@ -881,9 +884,10 @@ void CKeybindManager::moveActiveToWorkspace(std::string args) {
         return;
     }
 
-    auto       pWorkspace = g_pCompositor->getWorkspaceByID(WORKSPACEID);
-    CMonitor*  pMonitor   = nullptr;
-    const auto POLDWS     = g_pCompositor->getWorkspaceByID(PWINDOW->m_iWorkspaceID);
+    auto               pWorkspace            = g_pCompositor->getWorkspaceByID(WORKSPACEID);
+    CMonitor*          pMonitor              = nullptr;
+    const auto         POLDWS                = g_pCompositor->getWorkspaceByID(PWINDOW->m_iWorkspaceID);
+    static auto* const PALLOWWORKSPACECYCLES = &g_pConfigManager->getConfigValuePtr("binds:allow_workspace_cycles")->intValue;
 
     g_pHyprRenderer->damageWindow(PWINDOW);
 
@@ -903,6 +907,9 @@ void CKeybindManager::moveActiveToWorkspace(std::string args) {
 
     g_pCompositor->focusWindow(PWINDOW);
     g_pCompositor->warpCursorTo(PWINDOW->middle());
+
+    if (*PALLOWWORKSPACECYCLES)
+        pWorkspace->m_sPrevWorkspace = {POLDWS->m_iID, POLDWS->m_szName};
 }
 
 void CKeybindManager::moveActiveToWorkspaceSilent(std::string args) {
