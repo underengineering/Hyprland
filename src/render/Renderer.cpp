@@ -324,7 +324,13 @@ void CHyprRenderer::renderWindow(CWindow* pWindow, CMonitor* pMonitor, timespec*
             for (auto& wd : pWindow->m_dWindowDecorations)
                 wd->draw(pMonitor, renderdata.alpha * renderdata.fadeAlpha, offset);
 
+        static auto* const PXWLUSENN = &g_pConfigManager->getConfigValuePtr("xwayland:use_nearest_neighbor")->intValue;
+        if (pWindow->m_bIsX11 && *PXWLUSENN)
+            g_pHyprOpenGL->m_RenderData.useNearestNeighbor = true;
+
         wlr_surface_for_each_surface(pWindow->m_pWLSurface.wlr(), renderSurface, &renderdata);
+
+        g_pHyprOpenGL->m_RenderData.useNearestNeighbor = false;
 
         if (renderdata.decorate && pWindow->m_sSpecialRenderData.border) {
             static auto* const PROUNDING = &g_pConfigManager->getConfigValuePtr("decoration:rounding")->intValue;
@@ -392,10 +398,12 @@ void CHyprRenderer::renderLayer(SLayerSurface* pLayer, CMonitor* pMonitor, times
     renderdata.h                     = pLayer->geometry.height;
     renderdata.blockBlurOptimization = pLayer->layer == ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM || pLayer->layer == ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND;
 
-    if (pLayer->ignoreZero)
-        g_pHyprOpenGL->m_RenderData.discardMode |= DISCARD_ALPHAZERO;
+    if (pLayer->ignoreAlpha) {
+        g_pHyprOpenGL->m_RenderData.discardMode |= DISCARD_ALPHA;
+        g_pHyprOpenGL->m_RenderData.discardOpacity = pLayer->ignoreAlphaValue;
+    }
     wlr_surface_for_each_surface(pLayer->layerSurface->surface, renderSurface, &renderdata);
-    g_pHyprOpenGL->m_RenderData.discardMode &= ~DISCARD_ALPHAZERO;
+    g_pHyprOpenGL->m_RenderData.discardMode &= ~DISCARD_ALPHA;
 
     renderdata.squishOversized = false; // don't squish popups
     renderdata.dontRound       = true;
@@ -850,6 +858,24 @@ void CHyprRenderer::renderMonitor(CMonitor* pMonitor) {
     if (pMonitor->scheduledRecalc) {
         pMonitor->scheduledRecalc = false;
         g_pLayoutManager->getCurrentLayout()->recalculateMonitor(pMonitor->ID);
+    }
+
+    // gamma stuff
+    if (pMonitor->gammaChanged) {
+        pMonitor->gammaChanged = false;
+
+        const auto PGAMMACTRL = wlr_gamma_control_manager_v1_get_control(g_pCompositor->m_sWLRGammaCtrlMgr, pMonitor->output);
+
+        if (!wlr_gamma_control_v1_apply(PGAMMACTRL, &pMonitor->output->pending)) {
+            Debug::log(ERR, "Could not apply gamma control to %s", pMonitor->szName.c_str());
+            return;
+        }
+
+        if (!wlr_output_test(pMonitor->output)) {
+            Debug::log(ERR, "Output test failed for setting gamma to %s", pMonitor->szName.c_str());
+            wlr_output_rollback(pMonitor->output);
+            wlr_gamma_control_v1_send_failed_and_destroy(PGAMMACTRL);
+        }
     }
 
     // Direct scanout first
@@ -1347,7 +1373,7 @@ void CHyprRenderer::arrangeLayersForMonitor(const int& monitor) {
                PMONITOR->vecReservedBottomRight.x, PMONITOR->vecReservedBottomRight.y);
 }
 
-void CHyprRenderer::damageSurface(wlr_surface* pSurface, double x, double y) {
+void CHyprRenderer::damageSurface(wlr_surface* pSurface, double x, double y, double scale) {
     if (!pSurface)
         return; // wut?
 
@@ -1357,6 +1383,8 @@ void CHyprRenderer::damageSurface(wlr_surface* pSurface, double x, double y) {
     pixman_region32_t damageBox;
     pixman_region32_init(&damageBox);
     wlr_surface_get_effective_damage(pSurface, &damageBox);
+    if (scale != 1.0)
+        wlr_region_scale(&damageBox, &damageBox, scale);
 
     // schedule frame events
     if (!wl_list_empty(&pSurface->current.frame_callback_list)) {

@@ -63,6 +63,7 @@ CKeybindManager::CKeybindManager() {
     m_mDispatchers["focusurgentorlast"]             = focusUrgentOrLast;
     m_mDispatchers["focuscurrentorlast"]            = focusCurrentOrLast;
     m_mDispatchers["lockgroups"]                    = lockGroups;
+    m_mDispatchers["lockactivegroup"]               = lockActiveGroup;
     m_mDispatchers["moveintogroup"]                 = moveIntoGroup;
     m_mDispatchers["moveoutofgroup"]                = moveOutOfGroup;
     m_mDispatchers["global"]                        = global;
@@ -413,6 +414,9 @@ bool CKeybindManager::handleKeybinds(const uint32_t& modmask, const std::string&
         }
 
         if (pressed && k.release) {
+            if (k.nonConsuming)
+                return false;
+
             // suppress down event
             m_kHeldBack = keysym;
             return true;
@@ -451,7 +455,8 @@ bool CKeybindManager::handleKeybinds(const uint32_t& modmask, const std::string&
             wl_event_source_timer_update(m_pActiveKeybindEventSource, PACTIVEKEEB->repeatDelay);
         }
 
-        found = true;
+        if (!k.nonConsuming)
+            found = true;
     }
 
     return found;
@@ -1173,6 +1178,7 @@ void CKeybindManager::toggleGroup(std::string args) {
     if (!PWINDOW->m_sGroupData.pNextWindow) {
         PWINDOW->m_sGroupData.pNextWindow = PWINDOW;
         PWINDOW->m_sGroupData.head        = true;
+        PWINDOW->m_sGroupData.locked      = false;
 
         PWINDOW->m_dWindowDecorations.emplace_back(std::make_unique<CHyprGroupBarDecoration>(PWINDOW));
 
@@ -1987,6 +1993,24 @@ void CKeybindManager::lockGroups(std::string args) {
     } else {
         g_pKeybindManager->m_bGroupsLocked = false;
     }
+}
+
+void CKeybindManager::lockActiveGroup(std::string args) {
+    const auto PWINDOW = g_pCompositor->m_pLastWindow;
+
+    if (!PWINDOW || !PWINDOW->m_sGroupData.pNextWindow)
+        return;
+    const auto PHEAD = PWINDOW->getGroupHead();
+
+    if (args == "lock") {
+        PHEAD->m_sGroupData.locked = true;
+    } else if (args == "toggle") {
+        PHEAD->m_sGroupData.locked = !PHEAD->m_sGroupData.locked;
+    } else {
+        PHEAD->m_sGroupData.locked = false;
+    }
+
+    g_pCompositor->updateWindowAnimatedDecorationValues(PWINDOW);
 }
 
 void CKeybindManager::moveIntoGroup(std::string args) {

@@ -217,6 +217,7 @@ class CWindow {
     bool     m_bIsModal              = false;
     bool     m_bX11DoesntWantBorders = false;
     bool     m_bX11ShouldntFocus     = false;
+    float    m_fX11SurfaceScaledBy   = 1.f;
     //
 
     // For nofocus
@@ -288,6 +289,7 @@ class CWindow {
     struct SGroupData {
         CWindow* pNextWindow = nullptr; // nullptr means no grouping. Self means single group.
         bool     head        = false;
+        bool     locked      = false;
     } m_sGroupData;
 
     // For the list lookup
