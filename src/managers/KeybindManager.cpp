@@ -407,7 +407,6 @@ bool CKeybindManager::handleKeybinds(const uint32_t& modmask, const std::string&
             // this little maneouver is gonna cost us 4µs
             const auto KBKEY      = xkb_keysym_from_name(k.key.c_str(), XKB_KEYSYM_CASE_INSENSITIVE);
             const auto KBKEYUPPER = xkb_keysym_to_upper(KBKEY);
-            // small TODO: fix 0-9 keys and other modified ones with shift
 
             if (keysym != KBKEY && keysym != KBKEYUPPER)
                 continue;
@@ -1830,9 +1829,8 @@ void CKeybindManager::dpms(std::string arg) {
     bool        enable = arg.find("on") == 0;
     std::string port   = "";
 
-    if (arg.find_first_of(' ') != std::string::npos) {
+    if (arg.find_first_of(' ') != std::string::npos)
         port = arg.substr(arg.find_first_of(' ') + 1);
-    }
 
     for (auto& m : g_pCompositor->m_vMonitors) {
 
@@ -1905,11 +1903,10 @@ void CKeybindManager::pinActive(std::string args) {
 
     CWindow* PWINDOW = nullptr;
 
-    if (args != "" && args != "active" && args.length() > 1) {
+    if (args != "" && args != "active" && args.length() > 1)
         PWINDOW = g_pCompositor->getWindowByRegex(args);
-    } else {
+    else
         PWINDOW = g_pCompositor->m_pLastWindow;
-    }
 
     if (!PWINDOW) {
         Debug::log(ERR, "pin: window not found");
@@ -1986,13 +1983,12 @@ void CKeybindManager::fakeFullscreenActive(std::string args) {
 }
 
 void CKeybindManager::lockGroups(std::string args) {
-    if (args == "lock" || args.empty() || args == "lockgroups") {
+    if (args == "lock" || args.empty() || args == "lockgroups")
         g_pKeybindManager->m_bGroupsLocked = true;
-    } else if (args == "toggle") {
+    else if (args == "toggle")
         g_pKeybindManager->m_bGroupsLocked = !g_pKeybindManager->m_bGroupsLocked;
-    } else {
+    else
         g_pKeybindManager->m_bGroupsLocked = false;
-    }
 }
 
 void CKeybindManager::lockActiveGroup(std::string args) {
@@ -2000,15 +1996,15 @@ void CKeybindManager::lockActiveGroup(std::string args) {
 
     if (!PWINDOW || !PWINDOW->m_sGroupData.pNextWindow)
         return;
+
     const auto PHEAD = PWINDOW->getGroupHead();
 
-    if (args == "lock") {
+    if (args == "lock")
         PHEAD->m_sGroupData.locked = true;
-    } else if (args == "toggle") {
+    else if (args == "toggle")
         PHEAD->m_sGroupData.locked = !PHEAD->m_sGroupData.locked;
-    } else {
+    else
         PHEAD->m_sGroupData.locked = false;
-    }
 
     g_pCompositor->updateWindowAnimatedDecorationValues(PWINDOW);
 }
