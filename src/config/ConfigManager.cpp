@@ -1561,11 +1561,22 @@ void CConfigManager::loadConfigLoadVars() {
         ensureVRR();
     }
 
+    // Updates dynamic window rules
+    for (auto& w : g_pCompositor->m_vWindows) {
+        if (!w->m_bIsMapped)
+            continue;
+        
+        w->updateDynamicRules();
+    }
+    
     // Update window border colors
     g_pCompositor->updateAllWindowsAnimatedDecorationValues();
-
+    
     // update layout
     g_pLayoutManager->switchToLayout(configValues["general:layout"].strValue);
+
+    // update xwl scale
+    g_pXWaylandManager->updateXWaylandScale();
 
     // manual crash
     if (configValues["debug:manual_crash"].intValue && !m_bManualCrashInitiated) {

@@ -1436,6 +1436,9 @@ void CHyprRenderer::damageWindow(CWindow* pWindow) {
         m->addDamage(&fixedDamageBox);
     }
 
+    for (auto& wd : pWindow->m_dWindowDecorations)
+        wd->damageEntire();
+
     static auto* const PLOGDAMAGE = &g_pConfigManager->getConfigValuePtr("debug:log_damage")->intValue;
 
     if (*PLOGDAMAGE)
@@ -1879,6 +1882,8 @@ bool CHyprRenderer::applyMonitorRule(CMonitor* pMonitor, SMonitorRule* pMonitorR
     Debug::log(LOG, "Monitor %s data dump: res %ix%i@%.2fHz, scale %.2f, transform %i, pos %ix%i, 10b %i", pMonitor->szName.c_str(), (int)pMonitor->vecPixelSize.x,
                (int)pMonitor->vecPixelSize.y, pMonitor->refreshRate, pMonitor->scale, (int)pMonitor->transform, (int)pMonitor->vecPosition.x, (int)pMonitor->vecPosition.y,
                (int)pMonitor->enabled10bit);
+
+    g_pXWaylandManager->updateXWaylandScale();
 
     return true;
 }
