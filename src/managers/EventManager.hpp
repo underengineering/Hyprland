@@ -15,14 +15,11 @@ class CEventManager {
   public:
     CEventManager();
 
-    void        postEvent(const SHyprIPCEvent event, bool force = false);
+    void        postEvent(const SHyprIPCEvent event);
 
     void        startThread();
 
-    bool        m_bIgnoreEvents = false;
-
     std::thread m_tThread;
-
   private:
     std::vector<std::pair<int, wl_event_source*>> m_vAcceptedSocketFDs;
 };

@@ -1,6 +1,7 @@
 #include "Compositor.hpp"
 #include "helpers/Splashes.hpp"
 #include <random>
+#include <unordered_set>
 #include "debug/HyprCtl.hpp"
 #include "debug/CrashReporter.hpp"
 #ifdef USES_SYSTEMD
@@ -310,6 +311,11 @@ void CCompositor::cleanup() {
 
     m_bIsShuttingDown = true;
 
+#ifdef USES_SYSTEMD
+    if (sd_booted() > 0)
+        sd_notify(0, "STOPPING=1");
+#endif
+
     // unload all remaining plugins while the compositor is
     // still in a normal working state.
     g_pPluginSystem->unloadAllPlugins();
@@ -489,7 +495,14 @@ CMonitor* CCompositor::getMonitorFromName(const std::string& name) {
             return m.get();
         }
     }
+    return nullptr;
+}
 
+CMonitor* CCompositor::getMonitorFromDesc(const std::string& desc) {
+    for (auto& m : m_vMonitors) {
+        if (m->output->description && std::string(m->output->description).find(desc) == 0)
+            return m.get();
+    }
     return nullptr;
 }
 
@@ -1692,14 +1705,23 @@ void CCompositor::updateWindowAnimatedDecorationValues(CWindow* pWindow) {
         d->updateWindow(pWindow);
 }
 
-int CCompositor::getNextAvailableMonitorID() {
-    int64_t topID = -1;
-    for (auto& m : m_vRealMonitors) {
-        if ((int64_t)m->ID > topID)
-            topID = m->ID;
+int CCompositor::getNextAvailableMonitorID(std::string const& name) {
+    // reuse ID if it's already in the map
+    if (m_mMonitorIDMap.contains(name))
+        return m_mMonitorIDMap[name];
+
+    // otherwise, find minimum available ID that is not in the map
+    std::unordered_set<int> usedIDs;
+    for (auto const& monitor : m_vRealMonitors) {
+        usedIDs.insert(monitor->ID);
     }
 
-    return topID + 1;
+    int nextID = 0;
+    while (usedIDs.count(nextID) > 0) {
+        nextID++;
+    }
+    m_mMonitorIDMap[name] = nextID;
+    return nextID;
 }
 
 void CCompositor::swapActiveWorkspaces(CMonitor* pMonitorA, CMonitor* pMonitorB) {
@@ -2398,4 +2420,18 @@ void CCompositor::moveWindowToWorkspaceSafe(CWindow* pWindow, CWorkspace* pWorks
 
     if (FULLSCREEN)
         setWindowFullscreen(pWindow, true, FULLSCREENMODE);
+}
+
+CWindow* CCompositor::getForceFocus() {
+    for (auto& w : m_vWindows) {
+        if (!w->m_bIsMapped || w->isHidden() || !isWorkspaceVisible(w->m_iWorkspaceID))
+            continue;
+
+        if (!w->m_bStayFocused)
+            continue;
+
+        return w.get();
+    }
+
+    return nullptr;
 }

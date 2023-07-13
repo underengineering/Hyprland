@@ -233,14 +233,14 @@ void CScreencopyProtocolManager::captureOutput(wl_client* client, wl_resource* r
     }
 
     if (box.width == 0 && box.height == 0)
-        PFRAME->box = {0, 0, (int)(PFRAME->pMonitor->vecSize.x * PFRAME->pMonitor->scale), (int)(PFRAME->pMonitor->vecSize.y * PFRAME->pMonitor->scale)};
+        PFRAME->box = {0, 0, (int)(PFRAME->pMonitor->vecSize.x), (int)(PFRAME->pMonitor->vecSize.y)};
     else {
         PFRAME->box = box;
-        scaleBox(&PFRAME->box, PFRAME->pMonitor->scale);
     }
     int ow, oh;
     wlr_output_effective_resolution(PFRAME->pMonitor->output, &ow, &oh);
     wlr_box_transform(&PFRAME->box, &PFRAME->box, PFRAME->pMonitor->transform, ow, oh);
+    scaleBox(&PFRAME->box, PFRAME->pMonitor->scale);
 
     PFRAME->shmStride = (PSHMINFO->bpp / 8) * PFRAME->box.width;
 
@@ -407,9 +407,12 @@ void CScreencopyProtocolManager::sendFrameDamage(SScreencopyFrame* frame) {
     if (!frame->withDamage)
         return;
 
-    const auto RECT = pixman_region32_extents(g_pHyprOpenGL->m_RenderData.pDamage);
-    zwlr_screencopy_frame_v1_send_damage(frame->resource, std::clamp(RECT->x1, 0, frame->buffer->width), std::clamp(RECT->y1, 0, frame->buffer->height),
-                                         std::clamp(RECT->x2 - RECT->x1, 0, frame->buffer->width - RECT->x1), std::clamp(RECT->y2 - RECT->y1, 0, frame->buffer->height - RECT->y1));
+    PIXMAN_DAMAGE_FOREACH(&frame->pMonitor->lastFrameDamage) {
+        const auto RECT = &RECTSARR[i];
+        zwlr_screencopy_frame_v1_send_damage(frame->resource, std::clamp(RECT->x1, 0, frame->buffer->width), std::clamp(RECT->y1, 0, frame->buffer->height),
+                                             std::clamp(RECT->x2 - RECT->x1, 0, frame->buffer->width - RECT->x1),
+                                             std::clamp(RECT->y2 - RECT->y1, 0, frame->buffer->height - RECT->y1));
+    }
 }
 
 bool CScreencopyProtocolManager::copyFrameShm(SScreencopyFrame* frame, timespec* now) {

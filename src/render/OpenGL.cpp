@@ -3,6 +3,7 @@
 #include "../Compositor.hpp"
 #include "../helpers/MiscFunctions.hpp"
 #include "Shaders.hpp"
+#include <random>
 
 CHyprOpenGLImpl::CHyprOpenGLImpl() {
     RASSERT(eglMakeCurrent(wlr_egl_get_display(g_pCompositor->m_sWLREGL), EGL_NO_SURFACE, EGL_NO_SURFACE, wlr_egl_get_context(g_pCompositor->m_sWLREGL)),
@@ -27,8 +28,6 @@ CHyprOpenGLImpl::CHyprOpenGLImpl() {
 #endif
 
     g_pHookSystem->hookDynamic("preRender", [&](void* self, std::any data) { preRender(std::any_cast<CMonitor*>(data)); });
-
-    pixman_region32_init(&m_rOriginalDamageRegion);
 
     RASSERT(eglMakeCurrent(wlr_egl_get_display(g_pCompositor->m_sWLREGL), EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT), "Couldn't unset current EGL!");
 
@@ -149,7 +148,7 @@ void CHyprOpenGLImpl::end() {
 
     // end the render, copy the data to the WLR framebuffer
     if (!m_bFakeFrame) {
-        pixman_region32_copy(m_RenderData.pDamage, &m_rOriginalDamageRegion);
+        pixman_region32_copy(m_RenderData.pDamage, &m_RenderData.pMonitor->lastFrameDamage);
 
         if (!m_RenderData.pMonitor->mirrors.empty())
             g_pHyprOpenGL->saveBufferForMirror(); // save with original damage region
@@ -339,7 +338,7 @@ void CHyprOpenGLImpl::applyScreenShader(const std::string& path) {
     if (path == "" || path == STRVAL_EMPTY)
         return;
 
-    std::ifstream infile(absolutePath(path, std::string(getenv("HOME")) + "/.config/hypr"));
+    std::ifstream infile(absolutePath(path, g_pConfigManager->getConfigDir()));
 
     if (!infile.good()) {
         g_pConfigManager->addParseError("Screen shader parser: Screen shader path not found");
@@ -1549,7 +1548,13 @@ void CHyprOpenGLImpl::renderSplash(cairo_t* const CAIRO, cairo_surface_t* const 
 void CHyprOpenGLImpl::createBGTextureForMonitor(CMonitor* pMonitor) {
     RASSERT(m_RenderData.pMonitor, "Tried to createBGTex without begin()!");
 
-    static auto* const PNOSPLASH = &g_pConfigManager->getConfigValuePtr("misc:disable_splash_rendering")->intValue;
+    static auto* const              PNOSPLASH = &g_pConfigManager->getConfigValuePtr("misc:disable_splash_rendering")->intValue;
+
+    std::random_device              dev;
+    std::mt19937                    engine(dev());
+    std::uniform_int_distribution<> distribution(0, 10);
+
+    const bool                      USEANIME = distribution(engine) % 2 == 0; // about 50% I think
 
     // release the last tex if exists
     const auto PTEX = &m_mMonitorBGTextures[pMonitor];
@@ -1562,13 +1567,11 @@ void CHyprOpenGLImpl::createBGTextureForMonitor(CMonitor* pMonitor) {
     // TODO: use relative paths to the installation
     // or configure the paths at build time
 
-    // check if wallpapers exist
-    if (!std::filesystem::exists("/usr/share/hyprland/wall_8K.png"))
-        return; // the texture will be empty, oh well. We'll clear with a solid color anyways.
-
     // get the adequate tex
-    std::string texPath = "/usr/share/hyprland/wall_";
-    Vector2D    textureSize;
+    std::string texPath = "/usr/share/hyprland/wall_" + std::string(USEANIME ? "anime_" : "");
+    // check if wallpapers exist
+
+    Vector2D textureSize;
     if (pMonitor->vecTransformedSize.x > 3850) {
         textureSize = Vector2D(7680, 4320);
         texPath += "8K.png";
@@ -1578,6 +1581,14 @@ void CHyprOpenGLImpl::createBGTextureForMonitor(CMonitor* pMonitor) {
     } else {
         textureSize = Vector2D(1920, 1080);
         texPath += "2K.png";
+    }
+
+    if (!std::filesystem::exists(texPath)) {
+        // try local
+        texPath = texPath.substr(0, 5) + "local/" + texPath.substr(5);
+
+        if (!std::filesystem::exists(texPath))
+            return; // the texture will be empty, oh well. We'll clear with a solid color anyways.
     }
 
     PTEX->m_vSize = textureSize;
