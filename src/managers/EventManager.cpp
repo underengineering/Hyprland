@@ -107,8 +107,8 @@ void CEventManager::startThread() {
     m_tThread.detach();
 }
 
-void CEventManager::postEvent(const SHyprIPCEvent event, bool force) {
-    if ((m_bIgnoreEvents && !force) || g_pCompositor->m_bIsShuttingDown) {
+void CEventManager::postEvent(const SHyprIPCEvent event) {
+    if (g_pCompositor->m_bIsShuttingDown) {
         Debug::log(WARN, "Suppressed (ignoreevents true / shutting down) event of type %s, content: %s", event.event.c_str(), event.data.c_str());
         return;
     }
