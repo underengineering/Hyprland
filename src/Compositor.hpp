@@ -28,7 +28,8 @@
 #include "hyprerror/HyprError.hpp"
 #include "plugins/PluginSystem.hpp"
 
-enum eManagersInitStage {
+enum eManagersInitStage
+{
     STAGE_PRIORITY = 0,
     STAGE_LATE
 };
@@ -53,13 +54,13 @@ class CCompositor {
     wlr_xdg_activation_v1*                     m_sWLRXDGActivation;
     wlr_output_layout*                         m_sWLROutputLayout;
     wlr_idle*                                  m_sWLRIdle;
+    wlr_idle_notifier_v1*                      m_sWLRIdleNotifier;
     wlr_layer_shell_v1*                        m_sWLRLayerShell;
     wlr_xdg_shell*                             m_sWLRXDGShell;
     wlr_cursor*                                m_sWLRCursor;
     wlr_xcursor_manager*                       m_sWLRXCursorMgr;
     wlr_virtual_keyboard_manager_v1*           m_sWLRVKeyboardMgr;
     wlr_output_manager_v1*                     m_sWLROutputMgr;
-    wlr_xdg_output_manager_v1*                 m_sWLRXDGOutputMgr;
     wlr_presentation*                          m_sWLRPresentation;
     wlr_scene*                                 m_sWLRScene;
     wlr_input_inhibit_manager*                 m_sWLRInhibitMgr;
@@ -100,7 +101,7 @@ class CCompositor {
     std::vector<CWindow*>                     m_vWindowsFadingOut;
     std::vector<SLayerSurface*>               m_vSurfacesFadingOut;
 
-    std::unordered_map<std::string, int64_t>  m_mMonitorIDMap;
+    std::unordered_map<std::string, uint64_t>  m_mMonitorIDMap;
 
     void                                      initServer();
     void                                      startCompositor();
@@ -170,7 +171,7 @@ class CCompositor {
     CMonitor*      getMonitorInDirection(const char&);
     void           updateAllWindowsAnimatedDecorationValues();
     void           updateWindowAnimatedDecorationValues(CWindow*);
-    int            getNextAvailableMonitorID(std::string const & name);
+    int            getNextAvailableMonitorID(std::string const& name);
     void           moveWorkspaceToMonitor(CWorkspace*, CMonitor*);
     void           swapActiveWorkspaces(CMonitor*, CMonitor*);
     CMonitor*      getMonitorFromString(const std::string&);
@@ -197,6 +198,8 @@ class CCompositor {
     void           performUserChecks();
     void           moveWindowToWorkspaceSafe(CWindow* pWindow, CWorkspace* pWorkspace);
     CWindow*       getForceFocus();
+    void           notifyIdleActivity();
+    void           setIdleActivityInhibit(bool inhibit);
 
     std::string    explicitConfigPath;
 

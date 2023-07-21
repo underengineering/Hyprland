@@ -32,6 +32,7 @@ CKeybindManager::CKeybindManager() {
     m_mDispatchers["centerwindow"]                  = centerWindow;
     m_mDispatchers["togglegroup"]                   = toggleGroup;
     m_mDispatchers["changegroupactive"]             = changeGroupActive;
+    m_mDispatchers["movegroupwindow"]               = moveGroupWindow;
     m_mDispatchers["togglesplit"]                   = toggleSplit;
     m_mDispatchers["splitratio"]                    = alterSplitRatio;
     m_mDispatchers["focusmonitor"]                  = focusMonitor;
@@ -101,6 +102,7 @@ void CKeybindManager::removeKeybind(uint32_t mod, const std::string& key) {
 
 uint32_t CKeybindManager::stringToModMask(std::string mods) {
     uint32_t modMask = 0;
+    std::transform(mods.begin(), mods.end(), mods.begin(), ::toupper);
     if (mods.contains("SHIFT"))
         modMask |= WLR_MODIFIER_SHIFT;
     if (mods.contains("CAPS"))
@@ -1011,8 +1013,9 @@ void CKeybindManager::moveFocusTo(std::string args) {
         }
     };
 
-    const auto PWINDOWTOCHANGETO = PLASTWINDOW->m_bIsFullscreen ? g_pCompositor->getNextWindowOnWorkspace(PLASTWINDOW, arg == 'u' || arg == 't' || arg == 'r') :
-                                                                  g_pCompositor->getWindowInDirection(PLASTWINDOW, arg);
+    const auto PWINDOWTOCHANGETO = PLASTWINDOW->m_bIsFullscreen ?
+        (arg == 'd' || arg == 'b' || arg == 'r' ? g_pCompositor->getNextWindowOnWorkspace(PLASTWINDOW, true) : g_pCompositor->getPrevWindowOnWorkspace(PLASTWINDOW, true)) :
+        g_pCompositor->getWindowInDirection(PLASTWINDOW, arg);
 
     // Found window in direction, switch to it
     if (PWINDOWTOCHANGETO) {
@@ -1638,7 +1641,7 @@ void CKeybindManager::resizeWindow(std::string args) {
     if (SIZ.x < 1 || SIZ.y < 1)
         return;
 
-    g_pLayoutManager->getCurrentLayout()->resizeActiveWindow(SIZ - PWINDOW->m_vRealSize.goalv(), PWINDOW);
+    g_pLayoutManager->getCurrentLayout()->resizeActiveWindow(SIZ - PWINDOW->m_vRealSize.goalv(), CORNER_NONE, PWINDOW);
 
     if (PWINDOW->m_vRealSize.goalv().x > 1 && PWINDOW->m_vRealSize.goalv().y > 1)
         PWINDOW->setHidden(false);
@@ -2032,13 +2035,13 @@ void CKeybindManager::moveIntoGroup(std::string args) {
     if (!PWINDOWINDIR || !PWINDOWINDIR->m_sGroupData.pNextWindow)
         return;
 
+    if (PWINDOW->m_sGroupData.locked || PWINDOWINDIR->m_sGroupData.locked)
+        return;
+
     if (!PWINDOW->m_sGroupData.pNextWindow)
         PWINDOW->m_dWindowDecorations.emplace_back(std::make_unique<CHyprGroupBarDecoration>(PWINDOW));
 
     g_pLayoutManager->getCurrentLayout()->onWindowRemoved(PWINDOW); // This removes groupped property!
-
-    PWINDOW->m_sGroupData.locked = false;
-    PWINDOW->m_sGroupData.head   = false;
 
     PWINDOWINDIR->insertWindowToGroup(PWINDOW);
     PWINDOWINDIR->setGroupCurrent(PWINDOW);
@@ -2075,4 +2078,19 @@ void CKeybindManager::global(std::string args) {
         return;
 
     g_pProtocolManager->m_pGlobalShortcutsProtocolManager->sendGlobalShortcutEvent(APPID, NAME, g_pKeybindManager->m_iPassPressed);
+}
+
+void CKeybindManager::moveGroupWindow(std::string args) {
+    const auto BACK = args == "b" || args == "prev";
+
+    if (!g_pCompositor->m_pLastWindow || !g_pCompositor->m_pLastWindow->m_sGroupData.pNextWindow)
+        return;
+
+    if ((!BACK && g_pCompositor->m_pLastWindow->m_sGroupData.pNextWindow->m_sGroupData.head) || (BACK && g_pCompositor->m_pLastWindow->m_sGroupData.head)) {
+        std::swap(g_pCompositor->m_pLastWindow->m_sGroupData.head, g_pCompositor->m_pLastWindow->m_sGroupData.pNextWindow->m_sGroupData.head);
+        std::swap(g_pCompositor->m_pLastWindow->m_sGroupData.locked, g_pCompositor->m_pLastWindow->m_sGroupData.pNextWindow->m_sGroupData.locked);
+    } else
+        g_pCompositor->m_pLastWindow->switchWithWindowInGroup(BACK ? g_pCompositor->m_pLastWindow->getGroupPrevious() : g_pCompositor->m_pLastWindow->m_sGroupData.pNextWindow);
+
+    g_pCompositor->m_pLastWindow->updateWindowDecos();
 }

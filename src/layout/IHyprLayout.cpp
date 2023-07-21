@@ -159,8 +159,8 @@ void IHyprLayout::onWindowCreatedFloating(CWindow* pWindow) {
     }
 
     if (pWindow->m_bX11DoesntWantBorders || (pWindow->m_bIsX11 && pWindow->m_uSurface.xwayland->override_redirect)) {
-        pWindow->m_vRealPosition.setValue(pWindow->m_vRealPosition.goalv());
-        pWindow->m_vRealSize.setValue(pWindow->m_vRealSize.goalv());
+        pWindow->m_vRealPosition.warp();
+        pWindow->m_vRealSize.warp();
     }
 
     if (pWindow->m_iX11Type != 2) {
@@ -241,6 +241,9 @@ void IHyprLayout::onBeginDragWindow() {
     g_pHyprRenderer->damageWindow(DRAGGINGWINDOW);
 
     g_pKeybindManager->shadowKeybinds();
+
+    g_pCompositor->focusWindow(DRAGGINGWINDOW);
+    g_pCompositor->moveWindowToTop(DRAGGINGWINDOW);
 }
 
 void IHyprLayout::onEndDragWindow() {
@@ -266,8 +269,6 @@ void IHyprLayout::onEndDragWindow() {
     }
 
     g_pHyprRenderer->damageWindow(DRAGGINGWINDOW);
-
-    g_pCompositor->focusWindow(DRAGGINGWINDOW);
 }
 
 void IHyprLayout::onMouseMove(const Vector2D& mousePos) {
@@ -344,7 +345,7 @@ void IHyprLayout::onMouseMove(const Vector2D& mousePos) {
 
             g_pXWaylandManager->setWindowSize(DRAGGINGWINDOW, DRAGGINGWINDOW->m_vRealSize.goalv());
         } else {
-            resizeActiveWindow(TICKDELTA, DRAGGINGWINDOW);
+            resizeActiveWindow(TICKDELTA, m_eGrabbedCorner, DRAGGINGWINDOW);
         }
     }
 
@@ -516,6 +517,15 @@ CWindow* IHyprLayout::getNextWindowCandidate(CWindow* pWindow) {
         return nullptr;
 
     return PWINDOWCANDIDATE;
+}
+
+void IHyprLayout::requestFocusForWindow(CWindow* pWindow) {
+    if (pWindow->isHidden() && pWindow->m_sGroupData.pNextWindow) {
+        // grouped, change the current to this window
+        pWindow->setGroupCurrent(pWindow);
+    }
+
+    g_pCompositor->focusWindow(pWindow);
 }
 
 IHyprLayout::~IHyprLayout() {}

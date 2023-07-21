@@ -515,6 +515,8 @@ void CHyprMasterLayout::applyNodeDataToWindow(SMasterNodeData* pNode) {
     auto               gapsOut = WORKSPACERULE.gapsOut.value_or(*PGAPSOUT);
     auto               borderSize =
         PWINDOW->m_sSpecialRenderData.borderSize.toUnderlying() != -1 ? PWINDOW->m_sSpecialRenderData.borderSize.toUnderlying() : WORKSPACERULE.borderSize.value_or(*PBORDERSIZE);
+    if (PWINDOW->m_sAdditionalConfigData.borderSize.toUnderlying() != -1)
+        borderSize = PWINDOW->m_sAdditionalConfigData.borderSize.toUnderlying();
 
     if (!g_pCompositor->windowValidMapped(PWINDOW)) {
         Debug::log(ERR, "Node %lx holding invalid window %lx!!", pNode, PWINDOW);
@@ -590,7 +592,7 @@ bool CHyprMasterLayout::isWindowTiled(CWindow* pWindow) {
     return getNodeFromWindow(pWindow) != nullptr;
 }
 
-void CHyprMasterLayout::resizeActiveWindow(const Vector2D& pixResize, CWindow* pWindow) {
+void CHyprMasterLayout::resizeActiveWindow(const Vector2D& pixResize, eRectCorner corner, CWindow* pWindow) {
     const auto PWINDOW = pWindow ? pWindow : g_pCompositor->m_pLastWindow;
 
     if (!g_pCompositor->windowValidMapped(PWINDOW))

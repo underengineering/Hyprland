@@ -234,16 +234,7 @@ void CWindow::createToplevelHandle() {
 
     // handle events
     hyprListener_toplevelActivate.initCallback(
-        &m_phForeignToplevel->events.request_activate,
-        [&](void* owner, void* data) {
-            if (isHidden() && m_sGroupData.pNextWindow) {
-                // grouped, change the current to us
-                setGroupCurrent(this);
-            }
-
-            g_pCompositor->focusWindow(this);
-        },
-        this, "Toplevel");
+        &m_phForeignToplevel->events.request_activate, [&](void* owner, void* data) { g_pLayoutManager->getCurrentLayout()->requestFocusForWindow(this); }, this, "Toplevel");
 
     hyprListener_toplevelFullscreen.initCallback(
         &m_phForeignToplevel->events.request_fullscreen,
@@ -477,6 +468,10 @@ void CWindow::applyDynamicRule(const SWindowRule& r) {
         try {
             m_sAdditionalConfigData.rounding = std::stoi(r.szRule.substr(r.szRule.find_first_of(' ') + 1));
         } catch (std::exception& e) { Debug::log(ERR, "Rounding rule \"%s\" failed with: %s", r.szRule.c_str(), e.what()); }
+    } else if (r.szRule.find("bordersize") == 0) {
+        try {
+            m_sAdditionalConfigData.borderSize = std::stoi(r.szRule.substr(r.szRule.find_first_of(' ') + 1));
+        } catch (std::exception& e) { Debug::log(ERR, "Bordersize rule \"%s\" failed with: %s", r.szRule.c_str(), e.what()); }
     } else if (r.szRule.find("opacity") == 0) {
         try {
             CVarList vars(r.szRule, 0, ' ');
@@ -536,11 +531,14 @@ void CWindow::updateDynamicRules() {
     m_sAdditionalConfigData.rounding       = -1;
     m_sAdditionalConfigData.dimAround      = false;
     m_sAdditionalConfigData.forceRGBX      = false;
+    m_sAdditionalConfigData.borderSize     = -1;
 
     const auto WINDOWRULES = g_pConfigManager->getMatchingRules(this);
     for (auto& r : WINDOWRULES) {
         applyDynamicRule(r);
     }
+
+    g_pLayoutManager->getCurrentLayout()->recalculateMonitor(m_iMonitorID);
 }
 
 // check if the point is "hidden" under a rounded corner of the window
@@ -666,31 +664,56 @@ void CWindow::setGroupCurrent(CWindow* pWindow) {
 }
 
 void CWindow::insertWindowToGroup(CWindow* pWindow) {
-    const auto PHEAD = getGroupHead();
-    const auto PTAIL = getGroupTail();
+    static const auto* USECURRPOS = &g_pConfigManager->getConfigValuePtr("misc:group_insert_after_current")->intValue;
 
-    if (pWindow->m_sGroupData.pNextWindow) {
-        const auto            PHEAD = pWindow->getGroupHead();
-        std::vector<CWindow*> members;
-        CWindow*              curr = PHEAD;
-        do {
-            const auto PLAST = curr;
-            members.push_back(curr);
-            curr                            = curr->m_sGroupData.pNextWindow;
-            PLAST->m_sGroupData.pNextWindow = nullptr;
-            PLAST->m_sGroupData.head        = false;
-            PLAST->m_sGroupData.locked      = false;
-        } while (curr != PHEAD);
+    const auto BEGINAT = *USECURRPOS ? this : getGroupTail();
+    const auto ENDAT   = *USECURRPOS ? m_sGroupData.pNextWindow : getGroupHead();
 
-        for (auto& w : members) {
-            insertWindowToGroup(w);
-        }
-
+    if (!pWindow->m_sGroupData.pNextWindow) {
+        BEGINAT->m_sGroupData.pNextWindow = pWindow;
+        pWindow->m_sGroupData.pNextWindow = ENDAT;
+        pWindow->m_sGroupData.head        = false;
         return;
     }
 
-    PTAIL->m_sGroupData.pNextWindow   = pWindow;
-    pWindow->m_sGroupData.pNextWindow = PHEAD;
+    const auto SHEAD = pWindow->getGroupHead();
+    const auto STAIL = pWindow->getGroupTail();
+
+    SHEAD->m_sGroupData.head          = false;
+    BEGINAT->m_sGroupData.pNextWindow = SHEAD;
+    STAIL->m_sGroupData.pNextWindow   = ENDAT;
+}
+
+CWindow* CWindow::getGroupPrevious() {
+    CWindow* curr = m_sGroupData.pNextWindow;
+
+    while (curr != this && curr->m_sGroupData.pNextWindow != this)
+        curr = curr->m_sGroupData.pNextWindow;
+
+    return curr;
+}
+
+void CWindow::switchWithWindowInGroup(CWindow* pWindow) {
+    if (!m_sGroupData.pNextWindow || !pWindow->m_sGroupData.pNextWindow)
+        return;
+
+    if (m_sGroupData.pNextWindow == pWindow) { // A -> this -> pWindow -> B >> A -> pWindow -> this -> B
+        getGroupPrevious()->m_sGroupData.pNextWindow = pWindow;
+        m_sGroupData.pNextWindow                     = pWindow->m_sGroupData.pNextWindow;
+        pWindow->m_sGroupData.pNextWindow            = this;
+
+    } else if (pWindow->m_sGroupData.pNextWindow == this) { // A -> pWindow -> this -> B >> A -> this -> pWindow -> B
+        pWindow->getGroupPrevious()->m_sGroupData.pNextWindow = this;
+        pWindow->m_sGroupData.pNextWindow                     = m_sGroupData.pNextWindow;
+        m_sGroupData.pNextWindow                              = pWindow;
+
+    } else { // A -> this -> B | C -> pWindow -> D >> A -> pWindow -> B | C -> this -> D
+        std::swap(m_sGroupData.pNextWindow, pWindow->m_sGroupData.pNextWindow);
+        std::swap(getGroupPrevious()->m_sGroupData.pNextWindow, pWindow->getGroupPrevious()->m_sGroupData.pNextWindow);
+    }
+
+    std::swap(m_sGroupData.head, pWindow->m_sGroupData.head);
+    std::swap(m_sGroupData.locked, pWindow->m_sGroupData.locked);
 }
 
 void CWindow::updateGroupOutputs() {
@@ -715,6 +738,14 @@ Vector2D CWindow::middle() {
 }
 
 bool CWindow::opaque() {
+    if (m_fAlpha.fl() != 1.f || m_fActiveInactiveAlpha.fl() != 1.f)
+        return false;
+
+    const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(m_iWorkspaceID);
+
+    if (PWORKSPACE->m_fAlpha.fl() != 1.f)
+        return false;
+
     if (m_bIsX11)
         return !m_uSurface.xwayland->has_alpha;
 
@@ -726,4 +757,12 @@ bool CWindow::opaque() {
         return true;
 
     return false;
+}
+
+float CWindow::rounding() {
+    static auto* const PROUNDING = &g_pConfigManager->getConfigValuePtr("decoration:rounding")->intValue;
+
+    float              rounding = m_sAdditionalConfigData.rounding.toUnderlying() == -1 ? *PROUNDING : m_sAdditionalConfigData.rounding.toUnderlying();
+
+    return rounding;
 }
