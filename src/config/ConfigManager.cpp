@@ -100,6 +100,7 @@ void CConfigManager::setDefaultVars() {
     configValues["misc:swallow_exception_regex"].strValue      = STRVAL_EMPTY;
     configValues["misc:focus_on_activate"].intValue            = 0;
     configValues["misc:no_direct_scanout"].intValue            = 1;
+    configValues["misc:moveintogroup_lock_check"].intValue     = 0;
     configValues["misc:hide_cursor_on_touch"].intValue         = 1;
     configValues["misc:mouse_move_focuses_monitor"].intValue   = 1;
     configValues["misc:suppress_portal_warnings"].intValue     = 0;
@@ -160,6 +161,7 @@ void CConfigManager::setDefaultVars() {
     configValues["dwindle:use_active_for_splits"].intValue        = 1;
     configValues["dwindle:default_split_ratio"].floatValue        = 1.f;
     configValues["dwindle:smart_split"].intValue                  = 0;
+    configValues["dwindle:smart_resizing"].intValue               = 1;
 
     configValues["master:special_scale_factor"].floatValue = 0.8f;
     configValues["master:mfact"].floatValue                = 0.55f;
@@ -880,8 +882,8 @@ bool windowRuleValid(const std::string& RULE) {
     return !(RULE != "float" && RULE != "tile" && RULE.find("opacity") != 0 && RULE.find("move") != 0 && RULE.find("size") != 0 && RULE.find("minsize") != 0 &&
              RULE.find("maxsize") != 0 && RULE.find("pseudo") != 0 && RULE.find("monitor") != 0 && RULE.find("idleinhibit") != 0 && RULE != "nofocus" && RULE != "noblur" &&
              RULE != "noshadow" && RULE != "nodim" && RULE != "noborder" && RULE != "center" && RULE != "opaque" && RULE != "forceinput" && RULE != "fullscreen" &&
-             RULE != "nofullscreenrequest" && RULE != "fakefullscreen" && RULE != "nomaxsize" && RULE != "pin" && RULE != "noanim" && RULE != "dimaround" &&
-             RULE != "windowdance" && RULE != "maximize" && RULE.find("animation") != 0 && RULE.find("rounding") != 0 && RULE.find("workspace") != 0 &&
+             RULE != "nofullscreenrequest" && RULE != "nomaximizerequest" && RULE != "fakefullscreen" && RULE != "nomaxsize" && RULE != "pin" && RULE != "noanim" &&
+             RULE != "dimaround" && RULE != "windowdance" && RULE != "maximize" && RULE.find("animation") != 0 && RULE.find("rounding") != 0 && RULE.find("workspace") != 0 &&
              RULE.find("bordercolor") != 0 && RULE != "forcergbx" && RULE != "noinitialfocus" && RULE != "stayfocused" && RULE.find("bordersize") != 0);
 }
 

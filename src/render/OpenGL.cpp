@@ -199,7 +199,10 @@ void CHyprOpenGLImpl::end() {
 
         blend(false);
 
-        renderTexture(m_RenderData.pCurrentMonData->primaryFB.m_cTex, &monbox, 1.f, 0);
+        if (m_sFinalScreenShader.program < 1)
+            renderTexturePrimitive(m_RenderData.pCurrentMonData->primaryFB.m_cTex, &monbox);
+        else
+            renderTexture(m_RenderData.pCurrentMonData->primaryFB.m_cTex, &monbox, 1.f);
 
         blend(true);
 
@@ -713,6 +716,62 @@ void CHyprOpenGLImpl::renderTextureInternalWithDamage(const CTexture& tex, wlr_b
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         }
     }
+
+    glDisableVertexAttribArray(shader->posAttrib);
+    glDisableVertexAttribArray(shader->texAttrib);
+
+    glBindTexture(tex.m_iTarget, 0);
+}
+
+void CHyprOpenGLImpl::renderTexturePrimitive(const CTexture& tex, wlr_box* pBox) {
+    RASSERT(m_RenderData.pMonitor, "Tried to render texture without begin()!");
+    RASSERT((tex.m_iTexID > 0), "Attempted to draw NULL texture!");
+
+    TRACY_GPU_ZONE("RenderTexturePrimitive");
+
+    if (m_RenderData.damage.empty())
+        return;
+
+    wlr_box newBox = *pBox;
+    scaleBox(&newBox, m_RenderData.renderModif.scale);
+    newBox.x += m_RenderData.renderModif.translate.x;
+    newBox.y += m_RenderData.renderModif.translate.y;
+
+    // get transform
+    const auto TRANSFORM = wlr_output_transform_invert(!m_bEndFrame ? WL_OUTPUT_TRANSFORM_NORMAL : m_RenderData.pMonitor->transform);
+    float      matrix[9];
+    wlr_matrix_project_box(matrix, &newBox, TRANSFORM, 0, m_RenderData.pMonitor->output->transform_matrix);
+
+    float glMatrix[9];
+    wlr_matrix_multiply(glMatrix, m_RenderData.projection, matrix);
+
+    CShader* shader = &m_RenderData.pCurrentMonData->m_shPASSTHRURGBA;
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(tex.m_iTarget, tex.m_iTexID);
+
+    glUseProgram(shader->program);
+
+#ifndef GLES2
+    glUniformMatrix3fv(shader->proj, 1, GL_TRUE, glMatrix);
+#else
+    wlr_matrix_transpose(glMatrix, glMatrix);
+    glUniformMatrix3fv(shader->proj, 1, GL_FALSE, glMatrix);
+#endif
+    glUniform1i(shader->tex, 0);
+
+    glVertexAttribPointer(shader->posAttrib, 2, GL_FLOAT, GL_FALSE, 0, fullVerts);
+    glVertexAttribPointer(shader->texAttrib, 2, GL_FLOAT, GL_FALSE, 0, fullVerts);
+
+    glEnableVertexAttribArray(shader->posAttrib);
+    glEnableVertexAttribArray(shader->texAttrib);
+
+    for (auto& RECT : m_RenderData.damage.getRects()) {
+        scissor(&RECT);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    }
+
+    scissor((wlr_box*)nullptr);
 
     glDisableVertexAttribArray(shader->posAttrib);
     glDisableVertexAttribArray(shader->texAttrib);
@@ -1547,9 +1606,10 @@ void CHyprOpenGLImpl::createBGTextureForMonitor(CMonitor* pMonitor) {
 
     std::random_device              dev;
     std::mt19937                    engine(dev());
-    std::uniform_int_distribution<> distribution(0, 10);
+    std::uniform_int_distribution<> distribution(0, 2);
+    std::uniform_int_distribution<> distribution2(0, 1);
 
-    const bool                      USEANIME = *PFORCEHYPRCHAN || distribution(engine) % 2 == 0; // about 50% I think
+    const bool                      USEANIME = *PFORCEHYPRCHAN || distribution(engine) == 0; // 66% for anime
 
     // release the last tex if exists
     const auto PTEX = &m_mMonitorBGTextures[pMonitor];
@@ -1563,7 +1623,7 @@ void CHyprOpenGLImpl::createBGTextureForMonitor(CMonitor* pMonitor) {
     // or configure the paths at build time
 
     // get the adequate tex
-    std::string texPath = "/usr/share/hyprland/wall_" + std::string(USEANIME ? "anime_" : "");
+    std::string texPath = "/usr/share/hyprland/wall_" + std::string(USEANIME ? (distribution2(engine) == 0 ? "anime_" : "anime2_") : "");
     // check if wallpapers exist
 
     Vector2D textureSize;
@@ -1650,7 +1710,7 @@ void CHyprOpenGLImpl::clearWithTex() {
     }
 
     if (TEXIT != m_mMonitorBGTextures.end())
-        renderTexture(TEXIT->second, &m_mMonitorRenderResources[m_RenderData.pMonitor].backgroundTexBox, 1.0, 0);
+        renderTexturePrimitive(TEXIT->second, &m_mMonitorRenderResources[m_RenderData.pMonitor].backgroundTexBox);
 }
 
 void CHyprOpenGLImpl::destroyMonitorResources(CMonitor* pMonitor) {

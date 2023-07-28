@@ -97,6 +97,8 @@ int main(int argc, char** argv) {
 
     g_pCompositor->initServer();
 
+    Init::gainRealTime();
+
     Debug::log(LOG, "Hyprland init finished.");
 
     // If all's good to go, start.
