@@ -166,6 +166,8 @@ struct SConstraint {
     SMouse*                    pMouse     = nullptr;
     wlr_pointer_constraint_v1* constraint = nullptr;
 
+    bool                       active = false;
+
     bool                       hintSet = false;
     Vector2D                   positionHint; // the position hint, but will be set to the current cursor pos if not set.
 
@@ -309,8 +311,9 @@ struct SSwipeGesture {
 
     double      delta = 0;
 
-    float       avgSpeed    = 0;
-    int         speedPoints = 0;
+    int         initialDirection = 0;
+    float       avgSpeed         = 0;
+    int         speedPoints      = 0;
 
     CMonitor*   pMonitor = nullptr;
 };

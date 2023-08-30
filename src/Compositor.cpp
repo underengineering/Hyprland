@@ -165,9 +165,6 @@ void CCompositor::initServer() {
 
     m_sWLROutputPowerMgr = wlr_output_power_manager_v1_create(m_sWLDisplay);
 
-    m_sWLRScene = wlr_scene_create();
-    wlr_scene_attach_output_layout(m_sWLRScene, m_sWLROutputLayout);
-
     m_sWLRXDGShell = wlr_xdg_shell_create(m_sWLDisplay, 5);
 
     m_sWLRCursor = wlr_cursor_create();
@@ -1145,14 +1142,20 @@ void CCompositor::sanityCheckWorkspaces() {
 
         const auto WINDOWSONWORKSPACE = getWindowsOnWorkspace((*it)->m_iID);
 
-        if ((*it)->m_bIsSpecialWorkspace && WINDOWSONWORKSPACE == 0) {
-            getMonitorFromID((*it)->m_iMonitorID)->setSpecialWorkspace(nullptr);
-
-            it = m_vWorkspaces.erase(it);
-            continue;
-        }
-
         if ((WINDOWSONWORKSPACE == 0 && !isWorkspaceVisible((*it)->m_iID))) {
+
+            if ((*it)->m_bIsSpecialWorkspace) {
+                if ((*it)->m_fAlpha.fl() > 0.f /* don't abruptly end the fadeout */) {
+                    ++it;
+                    continue;
+                }
+
+                const auto PMONITOR = getMonitorFromID((*it)->m_iMonitorID);
+
+                if (PMONITOR && PMONITOR->specialWorkspaceID == (*it)->m_iID)
+                    PMONITOR->setSpecialWorkspace(nullptr);
+            }
+
             it = m_vWorkspaces.erase(it);
             continue;
         }
@@ -2421,22 +2424,7 @@ int CCompositor::getNewSpecialID() {
 }
 
 void CCompositor::performUserChecks() {
-    static constexpr auto BAD_PORTALS = {"kde", "gnome"};
-
-    static auto* const    PSUPPRESSPORTAL = &g_pConfigManager->getConfigValuePtr("misc:suppress_portal_warnings")->intValue;
-
-    if (!*PSUPPRESSPORTAL) {
-        if (std::ranges::any_of(BAD_PORTALS, [&](const std::string& portal) { return std::filesystem::exists("/usr/share/xdg-desktop-portal/portals/" + portal + ".portal"); })) {
-            // bad portal detected
-            g_pHyprNotificationOverlay->addNotification("You have one or more incompatible xdg-desktop-portal impls installed. Please remove incompatible ones to avoid issues.",
-                                                        CColor(0), 15000, ICON_ERROR);
-        }
-
-        if (std::filesystem::exists("/usr/share/xdg-desktop-portal/portals/hyprland.portal") && std::filesystem::exists("/usr/share/xdg-desktop-portal/portals/wlr.portal")) {
-            g_pHyprNotificationOverlay->addNotification("You have xdg-desktop-portal-hyprland and -wlr installed simultaneously. Please uninstall one to avoid issues.", CColor(0),
-                                                        15000, ICON_ERROR);
-        }
-    }
+    // empty
 }
 
 void CCompositor::moveWindowToWorkspaceSafe(CWindow* pWindow, CWorkspace* pWorkspace) {
@@ -2549,16 +2537,16 @@ void CCompositor::arrangeMonitors() {
     }
 
     for (auto& m : toArrange) {
-        Debug::log(LOG, "arrangeMonitors: %s auto [%.2f, %.2f]", m->szName.c_str(), maxOffset, 0);
+        Debug::log(LOG, "arrangeMonitors: %s auto [%i, %.2f]", m->szName.c_str(), maxOffset, 0);
         m->moveTo({maxOffset, 0});
-        maxOffset += m->vecPosition.x + m->vecSize.x;
+        maxOffset += m->vecSize.x;
     }
 
     // reset maxOffset (reuse)
     // and set xwayland positions aka auto for all
     maxOffset = 0;
     for (auto& m : m_vMonitors) {
-        Debug::log(LOG, "arrangeMonitors: %s xwayland [%.2f, %.2f]", m->szName.c_str(), maxOffset, 0);
+        Debug::log(LOG, "arrangeMonitors: %s xwayland [%i, %.2f]", m->szName.c_str(), maxOffset, 0);
         m->vecXWaylandPosition = {maxOffset, 0};
         maxOffset += (*PXWLFORCESCALEZERO ? m->vecTransformedSize.x : m->vecSize.x);
     }

@@ -139,13 +139,12 @@ void CKeybindManager::updateXKBTranslationState() {
     const auto     VARIANT  = g_pConfigManager->getString("input:kb_variant");
     const auto     OPTIONS  = g_pConfigManager->getString("input:kb_options");
 
-    xkb_rule_names rules = {.rules = RULES.c_str(), .model = MODEL.c_str(), .layout = LAYOUT.c_str(), .variant = VARIANT.c_str(), .options = OPTIONS.c_str()};
-
+    xkb_rule_names rules      = {.rules = RULES.c_str(), .model = MODEL.c_str(), .layout = LAYOUT.c_str(), .variant = VARIANT.c_str(), .options = OPTIONS.c_str()};
     const auto     PCONTEXT   = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
-    FILE* const    KEYMAPFILE = FILEPATH == "" ? NULL : fopen(FILEPATH.c_str(), "r");
+    FILE* const    KEYMAPFILE = FILEPATH == "" ? NULL : fopen(absolutePath(FILEPATH, g_pConfigManager->configCurrentPath).c_str(), "r");
 
-    auto           PKEYMAP = FILEPATH == "" ? xkb_keymap_new_from_names(PCONTEXT, &rules, XKB_KEYMAP_COMPILE_NO_FLAGS) :
-                                              xkb_keymap_new_from_file(PCONTEXT, KEYMAPFILE, XKB_KEYMAP_FORMAT_TEXT_V1, XKB_KEYMAP_COMPILE_NO_FLAGS);
+    auto           PKEYMAP = KEYMAPFILE ? xkb_keymap_new_from_file(PCONTEXT, KEYMAPFILE, XKB_KEYMAP_FORMAT_TEXT_V1, XKB_KEYMAP_COMPILE_NO_FLAGS) :
+                                          xkb_keymap_new_from_names(PCONTEXT, &rules, XKB_KEYMAP_COMPILE_NO_FLAGS);
     if (KEYMAPFILE)
         fclose(KEYMAPFILE);
 
@@ -388,10 +387,11 @@ bool CKeybindManager::handleKeybinds(const uint32_t& modmask, const std::string&
     if (g_pCompositor->m_sSeat.exclusiveClient)
         Debug::log(LOG, "Keybind handling only locked (inhibitor)");
 
-    if (pressed && m_kHeldBack) {
-        // release the held back event
-        wlr_seat_keyboard_notify_key(g_pCompositor->m_sSeat.seat, time, m_kHeldBack, WL_KEYBOARD_KEY_STATE_PRESSED);
-        m_kHeldBack = 0;
+    if (pressed && !m_vHeldBack.empty()) {
+        // release the held back events
+        for (auto& k : m_vHeldBack)
+            wlr_seat_keyboard_notify_key(g_pCompositor->m_sSeat.seat, time, k, WL_KEYBOARD_KEY_STATE_PRESSED);
+        m_vHeldBack.clear();
     }
 
     for (auto& k : m_lKeybinds) {
@@ -420,11 +420,15 @@ bool CKeybindManager::handleKeybinds(const uint32_t& modmask, const std::string&
 
         if (pressed && k.release) {
             if (k.nonConsuming)
-                return false;
+                continue;
+
+            found = true;
+
+            if (k.transparent)
+                continue;
 
             // suppress down event
-            m_kHeldBack = keysym;
-            return true;
+            m_vHeldBack.push_back(keysym);
         }
 
         const auto DISPATCHER = m_mDispatchers.find(k.mouse ? "mouse" : k.handler);
@@ -474,7 +478,7 @@ void CKeybindManager::shadowKeybinds(const xkb_keysym_t& doesntHave, const int& 
 
         bool shadow = false;
 
-        if (k.handler == "global")
+        if (k.handler == "global" || k.transparent)
             continue; // can't be shadowed
 
         const auto KBKEY      = xkb_keysym_from_name(k.key.c_str(), XKB_KEYSYM_CASE_INSENSITIVE);
@@ -1222,13 +1226,13 @@ void CKeybindManager::toggleGroup(std::string args) {
                 w->m_sGroupData.head = false;
             }
 
-            bool prevState                     = g_pKeybindManager->m_bGroupsLocked;
+            const bool GROUPSLOCKEDPREV        = g_pKeybindManager->m_bGroupsLocked;
             g_pKeybindManager->m_bGroupsLocked = true;
             for (auto& w : members) {
                 g_pLayoutManager->getCurrentLayout()->onWindowCreated(w);
                 w->updateWindowDecos();
             }
-            g_pKeybindManager->m_bGroupsLocked = prevState;
+            g_pKeybindManager->m_bGroupsLocked = GROUPSLOCKEDPREV;
         }
     }
 
@@ -1511,12 +1515,8 @@ void CKeybindManager::toggleSpecialWorkspace(std::string args) {
         return;
     }
 
-    if (g_pCompositor->getWindowsOnWorkspace(workspaceID) == 0) {
-        Debug::log(LOG, "Can't open empty special workspace!");
-        return;
-    }
-
     bool       requestedWorkspaceIsAlreadyOpen = false;
+    bool       requestedWorkspaceExists        = g_pCompositor->getWorkspaceByID(workspaceID);
     const auto PMONITOR                        = *PFOLLOWMOUSE == 1 ? g_pCompositor->getMonitorFromCursor() : g_pCompositor->m_pLastMonitor;
     int        specialOpenOnMonitor            = PMONITOR->specialWorkspaceID;
 
@@ -1562,10 +1562,8 @@ void CKeybindManager::toggleSpecialWorkspace(std::string args) {
         // not open anywhere
         auto PSPECIALWORKSPACE = g_pCompositor->getWorkspaceByID(workspaceID);
 
-        if (!PSPECIALWORKSPACE) {
-            // ??? happens sometimes...?
+        if (!PSPECIALWORKSPACE)
             PSPECIALWORKSPACE = g_pCompositor->createNewWorkspace(workspaceID, PMONITOR->ID, workspaceName);
-        }
 
         PMONITOR->setSpecialWorkspace(PSPECIALWORKSPACE);
     }
@@ -1953,9 +1951,28 @@ void CKeybindManager::mouse(std::string args) {
         if (PRESSED) {
             g_pKeybindManager->m_bIsMouseBindActive = true;
 
-            g_pInputManager->currentlyDraggedWindow = g_pCompositor->vectorToWindowIdeal(g_pInputManager->getMouseCoordsInternal());
-            g_pInputManager->dragMode               = MBIND_MOVE;
+            const auto mouseCoords = g_pInputManager->getMouseCoordsInternal();
+            CWindow*   pWindow     = g_pCompositor->vectorToWindowIdeal(mouseCoords);
 
+            if (pWindow && !pWindow->m_bIsFullscreen && !pWindow->hasPopupAt(mouseCoords) && pWindow->m_sGroupData.pNextWindow) {
+                const wlr_box box = pWindow->getDecorationByType(DECORATION_GROUPBAR)->getWindowDecorationRegion().getExtents();
+                if (wlr_box_contains_point(&box, mouseCoords.x, mouseCoords.y)) {
+                    const int SIZE = pWindow->getGroupSize();
+                    pWindow        = pWindow->getGroupWindowByIndex((mouseCoords.x - box.x) * SIZE / box.width);
+
+                    // hack
+                    g_pLayoutManager->getCurrentLayout()->onWindowRemoved(pWindow);
+                    if (!pWindow->m_bIsFloating) {
+                        const bool GROUPSLOCKEDPREV        = g_pKeybindManager->m_bGroupsLocked;
+                        g_pKeybindManager->m_bGroupsLocked = true;
+                        g_pLayoutManager->getCurrentLayout()->onWindowCreated(pWindow);
+                        g_pKeybindManager->m_bGroupsLocked = GROUPSLOCKEDPREV;
+                    }
+                }
+            }
+
+            g_pInputManager->currentlyDraggedWindow = pWindow;
+            g_pInputManager->dragMode               = MBIND_MOVE;
             g_pLayoutManager->getCurrentLayout()->onBeginDragWindow();
         } else {
             g_pKeybindManager->m_bIsMouseBindActive = false;
@@ -2048,7 +2065,7 @@ void CKeybindManager::moveIntoGroup(std::string args) {
     if (!PWINDOW || PWINDOW->m_bIsFloating)
         return;
 
-    const auto PWINDOWINDIR = g_pCompositor->getWindowInDirection(PWINDOW, arg);
+    auto PWINDOWINDIR = g_pCompositor->getWindowInDirection(PWINDOW, arg);
 
     if (!PWINDOWINDIR || !PWINDOWINDIR->m_sGroupData.pNextWindow)
         return;
@@ -2060,6 +2077,9 @@ void CKeybindManager::moveIntoGroup(std::string args) {
         PWINDOW->m_dWindowDecorations.emplace_back(std::make_unique<CHyprGroupBarDecoration>(PWINDOW));
 
     g_pLayoutManager->getCurrentLayout()->onWindowRemoved(PWINDOW); // This removes groupped property!
+
+    static const auto* USECURRPOS = &g_pConfigManager->getConfigValuePtr("misc:group_insert_after_current")->intValue;
+    PWINDOWINDIR                  = *USECURRPOS ? PWINDOWINDIR : PWINDOWINDIR->getGroupTail();
 
     PWINDOWINDIR->insertWindowToGroup(PWINDOW);
     PWINDOWINDIR->setGroupCurrent(PWINDOW);

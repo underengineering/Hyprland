@@ -545,11 +545,25 @@ void CInputManager::processMouseDownNormal(wlr_pointer_button_event* e) {
     if (!PASS && !*PPASSMOUSE)
         return;
 
+    const auto mouseCoords = g_pInputManager->getMouseCoordsInternal();
+    const auto w           = g_pCompositor->vectorToWindowIdeal(mouseCoords);
+
+    if (w && !w->m_bIsFullscreen && !w->hasPopupAt(mouseCoords) && w->m_sGroupData.pNextWindow) {
+        const wlr_box box = w->getDecorationByType(DECORATION_GROUPBAR)->getWindowDecorationRegion().getExtents();
+        if (wlr_box_contains_point(&box, mouseCoords.x, mouseCoords.y)) {
+            if (e->state == WLR_BUTTON_PRESSED) {
+                const int SIZE    = w->getGroupSize();
+                CWindow*  pWindow = w->getGroupWindowByIndex((mouseCoords.x - box.x) * SIZE / box.width);
+                if (w != pWindow)
+                    w->setGroupCurrent(pWindow);
+            }
+            return;
+        }
+    }
+
     // clicking on border triggers resize
     // TODO detect click on LS properly
     if (*PRESIZEONBORDER && !m_bLastFocusOnLS) {
-        const auto mouseCoords = g_pInputManager->getMouseCoordsInternal();
-        const auto w           = g_pCompositor->vectorToWindowIdeal(mouseCoords);
         if (w && !w->m_bIsFullscreen) {
             const wlr_box real = {w->m_vRealPosition.vec().x, w->m_vRealPosition.vec().y, w->m_vRealSize.vec().x, w->m_vRealSize.vec().y};
             if ((!wlr_box_contains_point(&real, mouseCoords.x, mouseCoords.y) || w->isInCurvedCorner(mouseCoords.x, mouseCoords.y)) && !w->hasPopupAt(mouseCoords)) {
@@ -613,13 +627,28 @@ void CInputManager::processMouseDownKill(wlr_pointer_button_event* e) {
 }
 
 void CInputManager::onMouseWheel(wlr_pointer_axis_event* e) {
-    static auto* const PSCROLLFACTOR = &g_pConfigManager->getConfigValuePtr("input:touchpad:scroll_factor")->floatValue;
+    static auto* const PSCROLLFACTOR      = &g_pConfigManager->getConfigValuePtr("input:touchpad:scroll_factor")->floatValue;
+    static auto* const PGROUPBARSCROLLING = &g_pConfigManager->getConfigValuePtr("misc:groupbar_scrolling")->intValue;
 
     auto               factor = (*PSCROLLFACTOR <= 0.f || e->source != WLR_AXIS_SOURCE_FINGER ? 1.f : *PSCROLLFACTOR);
 
     bool               passEvent = g_pKeybindManager->onAxisEvent(e);
 
     g_pCompositor->notifyIdleActivity();
+
+    const auto MOUSECOORDS = g_pInputManager->getMouseCoordsInternal();
+    const auto pWindow     = g_pCompositor->vectorToWindowIdeal(MOUSECOORDS);
+
+    if (*PGROUPBARSCROLLING && pWindow && !pWindow->m_bIsFullscreen && !pWindow->hasPopupAt(MOUSECOORDS) && pWindow->m_sGroupData.pNextWindow) {
+        const wlr_box box = pWindow->getDecorationByType(DECORATION_GROUPBAR)->getWindowDecorationRegion().getExtents();
+        if (wlr_box_contains_point(&box, MOUSECOORDS.x, MOUSECOORDS.y)) {
+            if (e->delta > 0)
+                pWindow->setGroupCurrent(pWindow->m_sGroupData.pNextWindow);
+            else
+                pWindow->setGroupCurrent(pWindow->getGroupPrevious());
+            return;
+        }
+    }
 
     if (passEvent)
         wlr_seat_pointer_notify_axis(g_pCompositor->m_sSeat.seat, e->time_msec, e->orientation, factor * e->delta, std::round(factor * e->delta_discrete), e->source);
@@ -784,10 +813,12 @@ void CInputManager::applyConfigToKeyboard(SKeyboard* pKeyboard) {
     if (!FILEPATH.empty()) {
         auto path = absolutePath(FILEPATH, g_pConfigManager->configCurrentPath);
 
-        if (!std::filesystem::exists(path))
-            Debug::log(ERR, "input:kb_file= file doesnt exist");
-        else
-            KEYMAP = xkb_keymap_new_from_file(CONTEXT, fopen(path.c_str(), "r"), XKB_KEYMAP_FORMAT_TEXT_V1, XKB_KEYMAP_COMPILE_NO_FLAGS);
+        if (FILE* const KEYMAPFILE = fopen(path.c_str(), "r"); !KEYMAPFILE)
+            Debug::log(ERR, "Cannot open input:kb_file= file for reading");
+        else {
+            KEYMAP = xkb_keymap_new_from_file(CONTEXT, KEYMAPFILE, XKB_KEYMAP_FORMAT_TEXT_V1, XKB_KEYMAP_COMPILE_NO_FLAGS);
+            fclose(KEYMAPFILE);
+        }
     }
 
     if (!KEYMAP)
@@ -1191,6 +1222,8 @@ void CInputManager::constrainMouse(SMouse* pMouse, wlr_pointer_constraint_v1* co
     // warp to the constraint
     recheckConstraint(pMouse);
 
+    constraintFromWlr(constraint)->active = true;
+
     wlr_pointer_constraint_v1_send_activated(pMouse->currentConstraint);
 
     pMouse->hyprListener_commitConstraint.initCallback(&pMouse->currentConstraint->surface->events.commit, &Events::listener_commitConstraint, pMouse, "Mouse constraint commit");
@@ -1210,7 +1243,8 @@ void CInputManager::warpMouseToConstraintMiddle(SConstraint* pConstraint) {
 
     if (PWINDOW) {
         const auto RELATIVETO = PWINDOW->m_bIsX11 ?
-            g_pXWaylandManager->xwaylandToWaylandCoords({PWINDOW->m_uSurface.xwayland->x, PWINDOW->m_uSurface.xwayland->y}) / PWINDOW->m_fX11SurfaceScaledBy :
+            (PWINDOW->m_bIsMapped ? PWINDOW->m_vRealPosition.goalv() :
+                                    g_pXWaylandManager->xwaylandToWaylandCoords({PWINDOW->m_uSurface.xwayland->x, PWINDOW->m_uSurface.xwayland->y})) :
             PWINDOW->m_vRealPosition.goalv();
         const auto HINTSCALE  = PWINDOW->m_fX11SurfaceScaledBy;
 
@@ -1229,6 +1263,11 @@ void CInputManager::unconstrainMouse() {
         g_pXWaylandManager->activateSurface(CONSTRAINTWINDOW->m_pWLSurface.wlr(), false);
 
     wlr_pointer_constraint_v1_send_deactivated(g_pCompositor->m_sSeat.mouse->currentConstraint);
+
+    const auto PCONSTRAINT = constraintFromWlr(g_pCompositor->m_sSeat.mouse->currentConstraint);
+    warpMouseToConstraintMiddle(PCONSTRAINT);
+    PCONSTRAINT->active = false;
+
     g_pCompositor->m_sSeat.mouse->constraintActive = false;
 
     // TODO: its better to somehow detect the workspace...
@@ -1460,6 +1499,7 @@ void CInputManager::unsetCursorImage() {
 
 std::string CInputManager::deviceNameToInternalString(std::string in) {
     std::replace(in.begin(), in.end(), ' ', '-');
+    std::replace(in.begin(), in.end(), '\n', '-');
     std::transform(in.begin(), in.end(), in.begin(), ::tolower);
     return in;
 }

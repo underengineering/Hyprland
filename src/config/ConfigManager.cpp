@@ -103,12 +103,12 @@ void CConfigManager::setDefaultVars() {
     configValues["misc:moveintogroup_lock_check"].intValue     = 0;
     configValues["misc:hide_cursor_on_touch"].intValue         = 1;
     configValues["misc:mouse_move_focuses_monitor"].intValue   = 1;
-    configValues["misc:suppress_portal_warnings"].intValue     = 0;
     configValues["misc:render_ahead_of_time"].intValue         = 0;
     configValues["misc:render_ahead_safezone"].intValue        = 1;
     configValues["misc:cursor_zoom_factor"].floatValue         = 1.f;
     configValues["misc:cursor_zoom_rigid"].intValue            = 0;
     configValues["misc:allow_session_lock_restore"].intValue   = 0;
+    configValues["misc:groupbar_scrolling"].intValue           = 1;
     configValues["misc:group_insert_after_current"].intValue   = 1;
     configValues["misc:render_titles_in_groupbar"].intValue    = 1;
     configValues["misc:groupbar_titles_font_size"].intValue    = 8;
@@ -137,6 +137,7 @@ void CConfigManager::setDefaultVars() {
     configValues["decoration:blur:noise"].floatValue           = 0.0117;
     configValues["decoration:blur:contrast"].floatValue        = 0.8916;
     configValues["decoration:blur:brightness"].floatValue      = 0.8172;
+    configValues["decoration:blur:special"].intValue           = 1;
     configValues["decoration:active_opacity"].floatValue       = 1;
     configValues["decoration:inactive_opacity"].floatValue     = 1;
     configValues["decoration:fullscreen_opacity"].floatValue   = 1;
@@ -219,16 +220,18 @@ void CConfigManager::setDefaultVars() {
     configValues["binds:allow_workspace_cycles"].intValue   = 0;
     configValues["binds:focus_preferred_method"].intValue   = 0;
 
-    configValues["gestures:workspace_swipe"].intValue                    = 0;
-    configValues["gestures:workspace_swipe_fingers"].intValue            = 3;
-    configValues["gestures:workspace_swipe_distance"].intValue           = 300;
-    configValues["gestures:workspace_swipe_invert"].intValue             = 1;
-    configValues["gestures:workspace_swipe_min_speed_to_force"].intValue = 30;
-    configValues["gestures:workspace_swipe_cancel_ratio"].floatValue     = 0.5f;
-    configValues["gestures:workspace_swipe_create_new"].intValue         = 1;
-    configValues["gestures:workspace_swipe_forever"].intValue            = 0;
-    configValues["gestures:workspace_swipe_numbered"].intValue           = 0;
-    configValues["gestures:workspace_swipe_use_r"].intValue              = 0;
+    configValues["gestures:workspace_swipe"].intValue                          = 0;
+    configValues["gestures:workspace_swipe_fingers"].intValue                  = 3;
+    configValues["gestures:workspace_swipe_distance"].intValue                 = 300;
+    configValues["gestures:workspace_swipe_invert"].intValue                   = 1;
+    configValues["gestures:workspace_swipe_min_speed_to_force"].intValue       = 30;
+    configValues["gestures:workspace_swipe_cancel_ratio"].floatValue           = 0.5f;
+    configValues["gestures:workspace_swipe_create_new"].intValue               = 1;
+    configValues["gestures:workspace_swipe_direction_lock"].intValue           = 1;
+    configValues["gestures:workspace_swipe_direction_lock_threshold"].intValue = 10;
+    configValues["gestures:workspace_swipe_forever"].intValue                  = 0;
+    configValues["gestures:workspace_swipe_numbered"].intValue                 = 0;
+    configValues["gestures:workspace_swipe_use_r"].intValue                    = 0;
 
     configValues["xwayland:use_nearest_neighbor"].intValue = 1;
     configValues["xwayland:force_zero_scaling"].intValue   = 0;
@@ -793,6 +796,7 @@ void CConfigManager::handleBind(const std::string& command, const std::string& v
     bool       repeat       = false;
     bool       mouse        = false;
     bool       nonConsuming = false;
+    bool       transparent  = false;
     const auto BINDARGS     = command.substr(4);
 
     for (auto& arg : BINDARGS) {
@@ -806,6 +810,8 @@ void CConfigManager::handleBind(const std::string& command, const std::string& v
             mouse = true;
         } else if (arg == 'n') {
             nonConsuming = true;
+        } else if (arg == 't') {
+            transparent = true;
         } else {
             parseError = "bind: invalid flag";
             return;
@@ -863,11 +869,12 @@ void CConfigManager::handleBind(const std::string& command, const std::string& v
 
     if (KEY != "") {
         if (isNumber(KEY) && std::stoi(KEY) > 9)
-            g_pKeybindManager->addKeybind(SKeybind{"", std::stoi(KEY), MOD, HANDLER, COMMAND, locked, m_szCurrentSubmap, release, repeat, mouse, nonConsuming});
+            g_pKeybindManager->addKeybind(SKeybind{"", std::stoi(KEY), MOD, HANDLER, COMMAND, locked, m_szCurrentSubmap, release, repeat, mouse, nonConsuming, transparent});
         else if (KEY.find("code:") == 0 && isNumber(KEY.substr(5)))
-            g_pKeybindManager->addKeybind(SKeybind{"", std::stoi(KEY.substr(5)), MOD, HANDLER, COMMAND, locked, m_szCurrentSubmap, release, repeat, mouse, nonConsuming});
+            g_pKeybindManager->addKeybind(
+                SKeybind{"", std::stoi(KEY.substr(5)), MOD, HANDLER, COMMAND, locked, m_szCurrentSubmap, release, repeat, mouse, nonConsuming, transparent});
         else
-            g_pKeybindManager->addKeybind(SKeybind{KEY, -1, MOD, HANDLER, COMMAND, locked, m_szCurrentSubmap, release, repeat, mouse, nonConsuming});
+            g_pKeybindManager->addKeybind(SKeybind{KEY, -1, MOD, HANDLER, COMMAND, locked, m_szCurrentSubmap, release, repeat, mouse, nonConsuming, transparent});
     }
 }
 

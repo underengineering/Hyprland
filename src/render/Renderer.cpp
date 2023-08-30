@@ -54,7 +54,7 @@ void renderSurface(struct wlr_surface* surface, int x, int y, void* data) {
             g_pHyprOpenGL->renderTexture(TEXTURE, &windowBox, RDATA->fadeAlpha * RDATA->alpha, rounding, true);
         } else {
             if (RDATA->blur)
-                g_pHyprOpenGL->renderTextureWithBlur(TEXTURE, &windowBox, RDATA->fadeAlpha * RDATA->alpha, surface, rounding, RDATA->blockBlurOptimization);
+                g_pHyprOpenGL->renderTextureWithBlur(TEXTURE, &windowBox, RDATA->fadeAlpha * RDATA->alpha, surface, rounding, RDATA->blockBlurOptimization, RDATA->fadeAlpha);
             else
                 g_pHyprOpenGL->renderTexture(TEXTURE, &windowBox, RDATA->fadeAlpha * RDATA->alpha, rounding, true);
         }
@@ -453,7 +453,9 @@ void CHyprRenderer::renderSessionLockSurface(SSessionLockSurface* pSurface, CMon
 }
 
 void CHyprRenderer::renderAllClientsForWorkspace(CMonitor* pMonitor, CWorkspace* pWorkspace, timespec* time, const Vector2D& translate, const float& scale) {
-    static auto* const     PDIMSPECIAL = &g_pConfigManager->getConfigValuePtr("decoration:dim_special")->floatValue;
+    static auto* const     PDIMSPECIAL  = &g_pConfigManager->getConfigValuePtr("decoration:dim_special")->floatValue;
+    static auto* const     PBLURSPECIAL = &g_pConfigManager->getConfigValuePtr("decoration:blur:special")->intValue;
+    static auto* const     PBLUR        = &g_pConfigManager->getConfigValuePtr("decoration:blur:enabled")->intValue;
 
     const SRenderModifData RENDERMODIFDATA = {translate, scale};
 
@@ -593,7 +595,25 @@ void CHyprRenderer::renderAllClientsForWorkspace(CMonitor* pMonitor, CWorkspace*
     }
 
     // and then special
-    bool renderedSpecialBG = false;
+    for (auto& ws : g_pCompositor->m_vWorkspaces) {
+        if (ws->m_iMonitorID == pMonitor->ID && ws->m_fAlpha.fl() > 0.f && ws->m_bIsSpecialWorkspace) {
+            const auto SPECIALANIMPROGRS = ws->m_vRenderOffset.isBeingAnimated() ? ws->m_vRenderOffset.getCurveValue() : ws->m_fAlpha.getCurveValue();
+            const bool ANIMOUT           = !pMonitor->specialWorkspaceID;
+
+            if (*PDIMSPECIAL != 0.f) {
+                wlr_box monbox = {translate.x, translate.y, pMonitor->vecTransformedSize.x * scale, pMonitor->vecTransformedSize.y * scale};
+                g_pHyprOpenGL->renderRect(&monbox, CColor(0, 0, 0, *PDIMSPECIAL * (ANIMOUT ? (1.0 - SPECIALANIMPROGRS) : SPECIALANIMPROGRS)));
+            }
+
+            if (*PBLURSPECIAL && *PBLUR) {
+                wlr_box monbox = {translate.x, translate.y, pMonitor->vecTransformedSize.x * scale, pMonitor->vecTransformedSize.y * scale};
+                g_pHyprOpenGL->renderRectWithBlur(&monbox, CColor(0, 0, 0, 0), 0, (ANIMOUT ? (1.0 - SPECIALANIMPROGRS) : SPECIALANIMPROGRS));
+            }
+
+            break;
+        }
+    }
+
     for (auto& w : g_pCompositor->m_vWindows) {
         if (w->isHidden() && !w->m_bIsMapped && !w->m_bFadingOut)
             continue;
@@ -603,22 +623,6 @@ void CHyprRenderer::renderAllClientsForWorkspace(CMonitor* pMonitor, CWorkspace*
 
         if (!shouldRenderWindow(w.get(), pMonitor, pWorkspace))
             continue;
-
-        if (!renderedSpecialBG) {
-            if (*PDIMSPECIAL != 0.f) {
-                const auto PSPECIALWORKSPACE = g_pCompositor->getWorkspaceByID(w->m_iWorkspaceID);
-
-                const auto SPECIALANIMPROGRS =
-                    PSPECIALWORKSPACE->m_vRenderOffset.isBeingAnimated() ? PSPECIALWORKSPACE->m_vRenderOffset.getCurveValue() : PSPECIALWORKSPACE->m_fAlpha.getCurveValue();
-
-                const bool ANIMOUT = !pMonitor->specialWorkspaceID;
-
-                wlr_box    monbox = {translate.x, translate.y, pMonitor->vecTransformedSize.x * scale, pMonitor->vecTransformedSize.y * scale};
-                g_pHyprOpenGL->renderRect(&monbox, CColor(0, 0, 0, *PDIMSPECIAL * (ANIMOUT ? (1.0 - SPECIALANIMPROGRS) : SPECIALANIMPROGRS)));
-            }
-
-            renderedSpecialBG = true;
-        }
 
         // render the bad boy
         renderWindow(w.get(), pMonitor, time, true, RENDER_PASS_ALL);

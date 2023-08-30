@@ -56,6 +56,9 @@ void IHyprLayout::onWindowRemoved(CWindow* pWindow) {
 
             pWindow->setHidden(false);
 
+            pWindow->updateWindowDecos();
+            g_pCompositor->updateWindowAnimatedDecorationValues(pWindow);
+
             return;
         }
     }
@@ -129,21 +132,11 @@ void IHyprLayout::onWindowCreatedFloating(CWindow* pWindow) {
         // check if it's visible on any monitor (only for XDG)
         bool visible = pWindow->m_bIsX11;
 
-        if (!pWindow->m_bIsX11) {
-            for (auto& m : g_pCompositor->m_vMonitors) {
-                if (VECINRECT(Vector2D(desiredGeometry.x, desiredGeometry.y), m->vecPosition.x, m->vecPosition.y, m->vecPosition.x + m->vecSize.x,
-                              m->vecPosition.y + m->vecPosition.y) ||
-                    VECINRECT(Vector2D(desiredGeometry.x + desiredGeometry.width, desiredGeometry.y), m->vecPosition.x, m->vecPosition.y, m->vecPosition.x + m->vecSize.x,
-                              m->vecPosition.y + m->vecPosition.y) ||
-                    VECINRECT(Vector2D(desiredGeometry.x, desiredGeometry.y + desiredGeometry.height), m->vecPosition.x, m->vecPosition.y, m->vecPosition.x + m->vecSize.x,
-                              m->vecPosition.y + m->vecPosition.y) ||
-                    VECINRECT(Vector2D(desiredGeometry.x + desiredGeometry.width, desiredGeometry.y + desiredGeometry.height), m->vecPosition.x, m->vecPosition.y,
-                              m->vecPosition.x + m->vecSize.x, m->vecPosition.y + m->vecPosition.y)) {
-
-                    visible = true;
-                    break;
-                }
-            }
+        if (!visible) {
+            visible = g_pCompositor->isPointOnAnyMonitor(Vector2D(desiredGeometry.x, desiredGeometry.y)) &&
+                g_pCompositor->isPointOnAnyMonitor(Vector2D(desiredGeometry.x + desiredGeometry.width, desiredGeometry.y)) &&
+                g_pCompositor->isPointOnAnyMonitor(Vector2D(desiredGeometry.x, desiredGeometry.y + desiredGeometry.height)) &&
+                g_pCompositor->isPointOnAnyMonitor(Vector2D(desiredGeometry.x + desiredGeometry.width, desiredGeometry.y + desiredGeometry.height));
         }
 
         // TODO: detect a popup in a more consistent way.
@@ -189,9 +182,8 @@ void IHyprLayout::onBeginDragWindow() {
     }
 
     if (DRAGGINGWINDOW->m_bIsFullscreen) {
-        Debug::log(LOG, "Rejecting drag on a fullscreen window.");
-        g_pInputManager->currentlyDraggedWindow = nullptr;
-        return;
+        Debug::log(LOG, "Dragging a fullscreen window");
+        g_pCompositor->setWindowFullscreen(DRAGGINGWINDOW, false, FULLSCREEN_FULL);
     }
 
     const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(DRAGGINGWINDOW->m_iWorkspaceID);
@@ -405,11 +397,8 @@ void IHyprLayout::onMouseMove(const Vector2D& mousePos) {
 void IHyprLayout::changeWindowFloatingMode(CWindow* pWindow) {
 
     if (pWindow->m_bIsFullscreen) {
-        Debug::log(LOG, "Rejecting a change float order because window is fullscreen.");
-
-        // restore its' floating mode
-        pWindow->m_bIsFloating = !pWindow->m_bIsFloating;
-        return;
+        Debug::log(LOG, "changeWindowFloatingMode: fullscreen");
+        g_pCompositor->setWindowFullscreen(pWindow, false, FULLSCREEN_FULL);
     }
 
     pWindow->m_bPinned = false;
