@@ -3,8 +3,10 @@
 #include "HookSystemManager.hpp"
 
 int wlTick(void* data) {
+    if (g_pAnimationManager)
+        g_pAnimationManager->onTicked();
 
-    if (g_pCompositor->m_bSessionActive && g_pAnimationManager && g_pHookSystem &&
+    if (g_pCompositor->m_bSessionActive && g_pAnimationManager && g_pHookSystem && !g_pCompositor->m_bUnsafeState &&
         std::ranges::any_of(g_pCompositor->m_vMonitors, [](const auto& mon) { return mon->m_bEnabled && mon->output; })) {
         g_pAnimationManager->tick();
         EMIT_HOOK_EVENT("tick", nullptr);
@@ -37,10 +39,11 @@ void CAnimationManager::addBezierWithName(std::string name, const Vector2D& p1, 
     m_mBezierCurves[name].setup(&points);
 }
 
-void CAnimationManager::tick() {
-
+void CAnimationManager::onTicked() {
     m_bTickScheduled = false;
+}
 
+void CAnimationManager::tick() {
     static std::chrono::time_point lastTick = std::chrono::high_resolution_clock::now();
     m_fLastTickTime                         = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - lastTick).count() / 1000.0;
     lastTick                                = std::chrono::high_resolution_clock::now();
@@ -247,8 +250,8 @@ void CAnimationManager::tick() {
                     const auto EXTENTS = PDECO->getWindowDecorationExtents();
 
                     wlr_box    dmg = {PWINDOW->m_vRealPosition.vec().x - EXTENTS.topLeft.x, PWINDOW->m_vRealPosition.vec().y - EXTENTS.topLeft.y,
-                                      PWINDOW->m_vRealSize.vec().x + EXTENTS.topLeft.x + EXTENTS.bottomRight.x,
-                                      PWINDOW->m_vRealSize.vec().y + EXTENTS.topLeft.y + EXTENTS.bottomRight.y};
+                                   PWINDOW->m_vRealSize.vec().x + EXTENTS.topLeft.x + EXTENTS.bottomRight.x,
+                                   PWINDOW->m_vRealSize.vec().y + EXTENTS.topLeft.y + EXTENTS.bottomRight.y};
 
                     if (!*PSHADOWIGNOREWINDOW) {
                         // easy, damage the entire box
@@ -340,7 +343,10 @@ void CAnimationManager::animationSlide(CWindow* pWindow, std::string force, bool
 
     const auto PMONITOR = g_pCompositor->getMonitorFromID(pWindow->m_iMonitorID);
 
-    Vector2D   posOffset;
+    if (!PMONITOR)
+        return; // unsafe state most likely
+
+    Vector2D posOffset;
 
     if (force != "") {
         if (force == "bottom")
@@ -536,15 +542,14 @@ void CAnimationManager::scheduleTick() {
 
     const auto PMOSTHZ = g_pHyprRenderer->m_pMostHzMonitor;
 
-    float      refreshRate    = PMOSTHZ ? PMOSTHZ->refreshRate : 60.f;
-    float      refreshDelayMs = std::floor(1000.0 / refreshRate);
-
     if (!PMOSTHZ) {
-        wl_event_source_timer_update(m_pAnimationTick, refreshDelayMs);
+        wl_event_source_timer_update(m_pAnimationTick, 16);
         return;
     }
 
-    const float SINCEPRES = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now() - PMOSTHZ->lastPresentationTimer.chrono()).count() / 1000.0;
+    float       refreshDelayMs = std::floor(1000.f / PMOSTHZ->refreshRate);
+
+    const float SINCEPRES = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now() - PMOSTHZ->lastPresentationTimer.chrono()).count() / 1000.f;
 
     const auto  TOPRES = std::clamp(refreshDelayMs - SINCEPRES, 1.1f, 1000.f); // we can't send 0, that will disarm it
 

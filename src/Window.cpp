@@ -340,7 +340,7 @@ void CWindow::moveToWorkspace(int workspaceID) {
     updateSpecialRenderData();
 
     if (PWORKSPACE) {
-        g_pEventManager->postEvent(SHyprIPCEvent{"movewindow", getFormat("%lx,%s", this, PWORKSPACE->m_szName.c_str())});
+        g_pEventManager->postEvent(SHyprIPCEvent{"movewindow", getFormat("{:x},{}", (uintptr_t)this, PWORKSPACE->m_szName)});
         EMIT_HOOK_EVENT("moveWindow", (std::vector<void*>{this, PWORKSPACE}));
     }
 
@@ -386,6 +386,8 @@ void unregisterVar(void* ptr) {
 }
 
 void CWindow::onUnmap() {
+    static auto* const PCLOSEONLASTSPECIAL = &g_pConfigManager->getConfigValuePtr("misc:close_special_on_empty")->intValue;
+
     if (g_pCompositor->m_pLastWindow == this)
         g_pCompositor->m_pLastWindow = nullptr;
 
@@ -405,6 +407,12 @@ void CWindow::onUnmap() {
     m_pWLSurface.unassign();
 
     hyprListener_unmapWindow.removeCallback();
+
+    if (*PCLOSEONLASTSPECIAL && g_pCompositor->getWindowsOnWorkspace(m_iWorkspaceID) == 0 && g_pCompositor->isWorkspaceSpecial(m_iWorkspaceID)) {
+        const auto PMONITOR = g_pCompositor->getMonitorFromID(m_iMonitorID);
+        if (PMONITOR && PMONITOR->specialWorkspaceID == m_iWorkspaceID)
+            PMONITOR->setSpecialWorkspace(nullptr);
+    }
 }
 
 void CWindow::onMap() {
@@ -486,11 +494,11 @@ void CWindow::applyDynamicRule(const SWindowRule& r) {
     } else if (r.szRule.find("rounding") == 0) {
         try {
             m_sAdditionalConfigData.rounding = std::stoi(r.szRule.substr(r.szRule.find_first_of(' ') + 1));
-        } catch (std::exception& e) { Debug::log(ERR, "Rounding rule \"%s\" failed with: %s", r.szRule.c_str(), e.what()); }
+        } catch (std::exception& e) { Debug::log(ERR, "Rounding rule \"{}\" failed with: {}", r.szRule, e.what()); }
     } else if (r.szRule.find("bordersize") == 0) {
         try {
             m_sAdditionalConfigData.borderSize = std::stoi(r.szRule.substr(r.szRule.find_first_of(' ') + 1));
-        } catch (std::exception& e) { Debug::log(ERR, "Bordersize rule \"%s\" failed with: %s", r.szRule.c_str(), e.what()); }
+        } catch (std::exception& e) { Debug::log(ERR, "Bordersize rule \"{}\" failed with: {}", r.szRule, e.what()); }
     } else if (r.szRule.find("opacity") == 0) {
         try {
             CVarList vars(r.szRule, 0, ' ');
@@ -521,7 +529,7 @@ void CWindow::applyDynamicRule(const SWindowRule& r) {
                     opacityIDX++;
                 }
             }
-        } catch (std::exception& e) { Debug::log(ERR, "Opacity rule \"%s\" failed with: %s", r.szRule.c_str(), e.what()); }
+        } catch (std::exception& e) { Debug::log(ERR, "Opacity rule \"{}\" failed with: {}", r.szRule, e.what()); }
     } else if (r.szRule == "noanim") {
         m_sAdditionalConfigData.forceNoAnims = true;
     } else if (r.szRule.find("animation") == 0) {
@@ -538,7 +546,7 @@ void CWindow::applyDynamicRule(const SWindowRule& r) {
             } else {
                 m_sSpecialRenderData.activeBorderColor = configStringToInt(colorPart);
             }
-        } catch (std::exception& e) { Debug::log(ERR, "BorderColor rule \"%s\" failed with: %s", r.szRule.c_str(), e.what()); }
+        } catch (std::exception& e) { Debug::log(ERR, "BorderColor rule \"{}\" failed with: {}", r.szRule, e.what()); }
     } else if (r.szRule == "dimaround") {
         m_sAdditionalConfigData.dimAround = true;
     } else if (r.szRule == "keepaspectratio") {

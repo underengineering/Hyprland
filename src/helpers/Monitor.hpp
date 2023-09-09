@@ -93,10 +93,6 @@ class CMonitor {
     DYNLISTENER(monitorCommit);
     DYNLISTENER(monitorBind);
 
-    // hack: a group = workspaces on a monitor.
-    // I don't really care lol :P
-    wlr_ext_workspace_group_handle_v1* pWLRWorkspaceGroupHandle = nullptr;
-
     // methods
     void                       onConnect(bool noRule);
     void                       onDisconnect();
@@ -106,7 +102,7 @@ class CMonitor {
     void                       setMirror(const std::string&);
     bool                       isMirror();
     float                      getDefaultScale();
-    void                       changeWorkspace(CWorkspace* const pWorkspace, bool internal = false);
+    void                       changeWorkspace(CWorkspace* const pWorkspace, bool internal = false, bool noMouseMove = false);
     void                       changeWorkspace(const int& id, bool internal = false);
     void                       setSpecialWorkspace(CWorkspace* const pWorkspace);
     void                       setSpecialWorkspace(const int& id);

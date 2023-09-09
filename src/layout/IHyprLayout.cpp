@@ -31,24 +31,19 @@ void IHyprLayout::onWindowRemoved(CWindow* pWindow) {
             pWindow->m_sGroupData.pNextWindow = nullptr;
         else {
             // find last window and update
-            CWindow*   curr           = pWindow;
-            const auto CURRWASVISIBLE = curr->getGroupCurrent() == curr;
+            CWindow*   PWINDOWPREV     = pWindow->getGroupPrevious();
+            const auto WINDOWISVISIBLE = pWindow->getGroupCurrent() == pWindow;
 
-            while (curr->m_sGroupData.pNextWindow != pWindow)
-                curr = curr->m_sGroupData.pNextWindow;
+            if (WINDOWISVISIBLE)
+                PWINDOWPREV->setGroupCurrent(PWINDOWPREV);
 
-            if (CURRWASVISIBLE)
-                curr->setGroupCurrent(curr);
-
-            curr->m_sGroupData.pNextWindow = pWindow->m_sGroupData.pNextWindow;
+            PWINDOWPREV->m_sGroupData.pNextWindow = pWindow->m_sGroupData.pNextWindow;
 
             pWindow->m_sGroupData.pNextWindow = nullptr;
 
             if (pWindow->m_sGroupData.head) {
-                pWindow->m_sGroupData.head   = false;
-                curr->m_sGroupData.head      = true;
-                curr->m_sGroupData.locked    = pWindow->m_sGroupData.locked;
-                pWindow->m_sGroupData.locked = false;
+                std::swap(PWINDOWPREV->m_sGroupData.head, pWindow->m_sGroupData.head);
+                std::swap(PWINDOWPREV->m_sGroupData.locked, pWindow->m_sGroupData.locked);
             }
 
             if (pWindow == m_pLastTiledWindow)
@@ -57,6 +52,7 @@ void IHyprLayout::onWindowRemoved(CWindow* pWindow) {
             pWindow->setHidden(false);
 
             pWindow->updateWindowDecos();
+            PWINDOWPREV->getGroupCurrent()->updateWindowDecos();
             g_pCompositor->updateWindowAnimatedDecorationValues(pWindow);
 
             return;
@@ -93,7 +89,7 @@ void IHyprLayout::onWindowCreatedFloating(CWindow* pWindow) {
     static auto* const PXWLFORCESCALEZERO = &g_pConfigManager->getConfigValuePtr("xwayland:force_zero_scaling")->intValue;
 
     if (!PMONITOR) {
-        Debug::log(ERR, "Window %lx (%s) has an invalid monitor in onWindowCreatedFloating!!!", pWindow, pWindow->m_szTitle.c_str());
+        Debug::log(ERR, "Window {:x} ({}) has an invalid monitor in onWindowCreatedFloating!!!", (uintptr_t)pWindow, pWindow->m_szTitle);
         return;
     }
 
@@ -140,7 +136,7 @@ void IHyprLayout::onWindowCreatedFloating(CWindow* pWindow) {
         }
 
         // TODO: detect a popup in a more consistent way.
-        if ((desiredGeometry.x == 0 && desiredGeometry.y == 0) || !visible) {
+        if ((desiredGeometry.x == 0 && desiredGeometry.y == 0) || !visible || !pWindow->m_bIsX11) {
             // if it's not, fall back to the center placement
             pWindow->m_vRealPosition = PMONITOR->vecPosition + Vector2D((PMONITOR->vecSize.x - desiredGeometry.width) / 2.f, (PMONITOR->vecSize.y - desiredGeometry.height) / 2.f);
         } else {
@@ -406,7 +402,7 @@ void IHyprLayout::changeWindowFloatingMode(CWindow* pWindow) {
     const auto TILED = isWindowTiled(pWindow);
 
     // event
-    g_pEventManager->postEvent(SHyprIPCEvent{"changefloatingmode", getFormat("%lx,%d", pWindow, (int)TILED)});
+    g_pEventManager->postEvent(SHyprIPCEvent{"changefloatingmode", getFormat("{:x},{}", (uintptr_t)pWindow, (int)TILED)});
     EMIT_HOOK_EVENT("changeFloatingMode", pWindow);
 
     if (!TILED) {

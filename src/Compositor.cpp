@@ -10,7 +10,7 @@
 #include <ranges>
 
 int handleCritSignal(int signo, void* data) {
-    Debug::log(LOG, "Hyprland received signal %d", signo);
+    Debug::log(LOG, "Hyprland received signal {}", signo);
 
     if (signo == SIGTERM || signo == SIGINT || signo == SIGKILL)
         g_pCompositor->cleanup();
@@ -53,9 +53,9 @@ CCompositor::CCompositor() {
 
     Debug::init(m_szInstanceSignature);
 
-    Debug::log(LOG, "Instance Signature: %s", m_szInstanceSignature.c_str());
+    Debug::log(LOG, "Instance Signature: {}", m_szInstanceSignature);
 
-    Debug::log(LOG, "Hyprland PID: %i", m_iHyprlandPID);
+    Debug::log(LOG, "Hyprland PID: {}", m_iHyprlandPID);
 
     Debug::log(LOG, "===== SYSTEM INFO: =====");
 
@@ -69,7 +69,7 @@ CCompositor::CCompositor() {
 
     setRandomSplash();
 
-    Debug::log(LOG, "\nCurrent splash: %s\n\n", m_szCurrentSplash.c_str());
+    Debug::log(LOG, "\nCurrent splash: {}\n\n", m_szCurrentSplash);
 }
 
 CCompositor::~CCompositor() {
@@ -177,7 +177,7 @@ void CCompositor::initServer() {
     int        cursorSize = 24;
     try {
         cursorSize = std::stoi(XCURSORENV);
-    } catch (std::exception& e) { Debug::log(ERR, "XCURSOR_SIZE invalid in check #2? (%s)", XCURSORENV); }
+    } catch (std::exception& e) { Debug::log(ERR, "XCURSOR_SIZE invalid in check #2? ({})", XCURSORENV); }
 
     m_sWLRXCursorMgr = wlr_xcursor_manager_create(nullptr, cursorSize);
     wlr_xcursor_manager_load(m_sWLRXCursorMgr, 1);
@@ -199,8 +199,6 @@ void CCompositor::initServer() {
 
     m_sWLRInhibitMgr     = wlr_input_inhibit_manager_create(m_sWLDisplay);
     m_sWLRKbShInhibitMgr = wlr_keyboard_shortcuts_inhibit_v1_create(m_sWLDisplay);
-
-    m_sWLREXTWorkspaceMgr = wlr_ext_workspace_manager_v1_create(m_sWLDisplay);
 
     m_sWLRPointerConstraints = wlr_pointer_constraints_v1_create(m_sWLDisplay);
 
@@ -443,10 +441,10 @@ void CCompositor::startCompositor() {
         const auto RETVAL       = wl_display_add_socket(m_sWLDisplay, CANDIDATESTR.c_str());
         if (RETVAL >= 0) {
             m_szWLDisplaySocket = CANDIDATESTR;
-            Debug::log(LOG, "wl_display_add_socket for %s succeeded with %i", CANDIDATESTR.c_str(), RETVAL);
+            Debug::log(LOG, "wl_display_add_socket for {} succeeded with {}", CANDIDATESTR, RETVAL);
             break;
         } else {
-            Debug::log(WARN, "wl_display_add_socket for %s returned %i: skipping candidate %i", CANDIDATESTR.c_str(), RETVAL, candidate);
+            Debug::log(WARN, "wl_display_add_socket for {} returned {}: skipping candidate {}", CANDIDATESTR, RETVAL, candidate);
         }
     }
 
@@ -476,7 +474,7 @@ void CCompositor::startCompositor() {
             "dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE",
             nullptr);
 
-    Debug::log(LOG, "Running on WAYLAND_DISPLAY: %s", m_szWLDisplaySocket.c_str());
+    Debug::log(LOG, "Running on WAYLAND_DISPLAY: {}", m_szWLDisplaySocket);
 
     if (!wlr_backend_start(m_sWLRBackend)) {
         Debug::log(CRIT, "Backend did not start!");
@@ -880,7 +878,7 @@ void CCompositor::focusWindow(CWindow* pWindow, wlr_surface* pSurface) {
         const auto PWORKSPACE            = getWorkspaceByID(pWindow->m_iWorkspaceID);
         PWORKSPACE->m_pLastFocusedWindow = pWindow;
         const auto PMONITOR              = getMonitorFromID(PWORKSPACE->m_iMonitorID);
-        PMONITOR->changeWorkspace(PWORKSPACE);
+        PMONITOR->changeWorkspace(PWORKSPACE, false, true);
         // changeworkspace already calls focusWindow
         return;
     }
@@ -909,20 +907,12 @@ void CCompositor::focusWindow(CWindow* pWindow, wlr_surface* pSurface) {
 
     updateWindowAnimatedDecorationValues(pWindow);
 
-    // Handle urgency hint on the workspace
-    if (pWindow->m_bIsUrgent) {
+    if (pWindow->m_bIsUrgent)
         pWindow->m_bIsUrgent = false;
-        if (!hasUrgentWindowOnWorkspace(pWindow->m_iWorkspaceID)) {
-            const auto PWORKSPACE = getWorkspaceByID(pWindow->m_iWorkspaceID);
-            if (PWORKSPACE->m_pWlrHandle) {
-                wlr_ext_workspace_handle_v1_set_urgent(PWORKSPACE->m_pWlrHandle, 0);
-            }
-        }
-    }
 
     // Send an event
     g_pEventManager->postEvent(SHyprIPCEvent{"activewindow", g_pXWaylandManager->getAppIDClass(pWindow) + "," + pWindow->m_szTitle});
-    g_pEventManager->postEvent(SHyprIPCEvent{"activewindowv2", getFormat("%lx", pWindow)});
+    g_pEventManager->postEvent(SHyprIPCEvent{"activewindowv2", getFormat("{:x}", (uintptr_t)pWindow)});
 
     EMIT_HOOK_EVENT("activeWindow", pWindow);
 
@@ -953,7 +943,7 @@ void CCompositor::focusWindow(CWindow* pWindow, wlr_surface* pSurface) {
     // move to front of the window history
     const auto HISTORYPIVOT = std::find_if(m_vWindowFocusHistory.begin(), m_vWindowFocusHistory.end(), [&](const auto& other) { return other == pWindow; });
     if (HISTORYPIVOT == m_vWindowFocusHistory.end()) {
-        Debug::log(ERR, "BUG THIS: Window %lx has no pivot in history", pWindow);
+        Debug::log(ERR, "BUG THIS: Window {:x} has no pivot in history", (uintptr_t)pWindow);
     } else {
         std::rotate(m_vWindowFocusHistory.begin(), HISTORYPIVOT, HISTORYPIVOT + 1);
     }
@@ -998,9 +988,9 @@ void CCompositor::focusSurface(wlr_surface* pSurface, CWindow* pWindowOwner) {
     wl_signal_emit_mutable(&m_sSeat.seat->keyboard_state.events.focus_change, &event);
 
     if (pWindowOwner)
-        Debug::log(LOG, "Set keyboard focus to surface %lx, with window name: %s", pSurface, pWindowOwner->m_szTitle.c_str());
+        Debug::log(LOG, "Set keyboard focus to surface {:x}, with window name: {}", (uintptr_t)pSurface, pWindowOwner->m_szTitle);
     else
-        Debug::log(LOG, "Set keyboard focus to surface %lx", pSurface);
+        Debug::log(LOG, "Set keyboard focus to surface {:x}", (uintptr_t)pSurface);
 
     g_pXWaylandManager->activateSurface(pSurface, true);
     m_pLastFocus = pSurface;
@@ -1480,13 +1470,6 @@ CWindow* CCompositor::getWindowInDirection(CWindow* pWindow, char dir) {
     return nullptr;
 }
 
-void CCompositor::deactivateAllWLRWorkspaces(wlr_ext_workspace_handle_v1* exclude) {
-    for (auto& w : m_vWorkspaces) {
-        if (w->m_pWlrHandle && w->m_pWlrHandle != exclude)
-            w->setActive(false);
-    }
-}
-
 CWindow* CCompositor::getNextWindowOnWorkspace(CWindow* pWindow, bool focusableOnly) {
     bool gotToWindow = false;
     for (auto& w : m_vWindows) {
@@ -1561,15 +1544,6 @@ CWorkspace* CCompositor::getWorkspaceByString(const std::string& str) {
         std::string name = "";
         return getWorkspaceByID(getWorkspaceIDFromString(str, name));
     } catch (std::exception& e) { Debug::log(ERR, "Error in getWorkspaceByString, invalid id"); }
-
-    return nullptr;
-}
-
-CWorkspace* CCompositor::getWorkspaceByWorkspaceHandle(const wlr_ext_workspace_handle_v1* handle) {
-    for (auto& ws : m_vWorkspaces) {
-        if (ws->m_pWlrHandle == handle)
-            return ws.get();
-    }
 
     return nullptr;
 }
@@ -1956,7 +1930,7 @@ void CCompositor::moveWorkspaceToMonitor(CWorkspace* pWorkspace, CMonitor* pMoni
     if (pWorkspace->m_iMonitorID == pMonitor->ID)
         return;
 
-    Debug::log(LOG, "moveWorkspaceToMonitor: Moving %d to monitor %d", pWorkspace->m_iID, pMonitor->ID);
+    Debug::log(LOG, "moveWorkspaceToMonitor: Moving {} to monitor {}", pWorkspace->m_iID, pMonitor->ID);
 
     const auto POLDMON = getMonitorFromID(pWorkspace->m_iMonitorID);
 
@@ -1983,12 +1957,12 @@ void CCompositor::moveWorkspaceToMonitor(CWorkspace* pWorkspace, CMonitor* pMoni
             }())
                 nextWorkspaceOnMonitorID++;
 
-            Debug::log(LOG, "moveWorkspaceToMonitor: Plugging gap with new %d", nextWorkspaceOnMonitorID);
+            Debug::log(LOG, "moveWorkspaceToMonitor: Plugging gap with new {}", nextWorkspaceOnMonitorID);
 
             g_pCompositor->createNewWorkspace(nextWorkspaceOnMonitorID, POLDMON->ID);
         }
 
-        Debug::log(LOG, "moveWorkspaceToMonitor: Plugging gap with existing %d", nextWorkspaceOnMonitorID);
+        Debug::log(LOG, "moveWorkspaceToMonitor: Plugging gap with existing {}", nextWorkspaceOnMonitorID);
         POLDMON->changeWorkspace(nextWorkspaceOnMonitorID);
     }
 
@@ -2025,7 +1999,7 @@ void CCompositor::moveWorkspaceToMonitor(CWorkspace* pWorkspace, CMonitor* pMoni
     }
 
     if (SWITCHINGISACTIVE && POLDMON == g_pCompositor->m_pLastMonitor) { // if it was active, preserve its' status. If it wasn't, don't.
-        Debug::log(LOG, "moveWorkspaceToMonitor: SWITCHINGISACTIVE, active %d -> %d", pMonitor->activeWorkspace, pWorkspace->m_iID);
+        Debug::log(LOG, "moveWorkspaceToMonitor: SWITCHINGISACTIVE, active {} -> {}", pMonitor->activeWorkspace, pWorkspace->m_iID);
 
         if (const auto PWORKSPACE = getWorkspaceByID(pMonitor->activeWorkspace); PWORKSPACE)
             getWorkspaceByID(pMonitor->activeWorkspace)->startAnim(false, false);
@@ -2213,13 +2187,13 @@ CWindow* CCompositor::getWindowByRegex(const std::string& regexp) {
                 break;
             }
             case MODE_ADDRESS: {
-                std::string addr = getFormat("0x%lx", w.get());
+                std::string addr = getFormat("0x{:x}", (uintptr_t)w.get());
                 if (matchCheck != addr)
                     continue;
                 break;
             }
             case MODE_PID: {
-                std::string pid = getFormat("%d", w->getPID());
+                std::string pid = getFormat("{}", w->getPID());
                 if (matchCheck != pid)
                     continue;
                 break;
@@ -2368,10 +2342,6 @@ CWorkspace* CCompositor::createNewWorkspace(const int& id, const int& monid, con
 
     const auto PWORKSPACE = m_vWorkspaces.emplace_back(std::make_unique<CWorkspace>(monID, NAME, SPECIAL)).get();
 
-    // We are required to set the name here immediately
-    if (!SPECIAL)
-        wlr_ext_workspace_handle_v1_set_name(PWORKSPACE->m_pWlrHandle, NAME.c_str());
-
     PWORKSPACE->m_iID        = id;
     PWORKSPACE->m_iMonitorID = monID;
 
@@ -2387,9 +2357,10 @@ void CCompositor::renameWorkspace(const int& id, const std::string& name) {
     if (isWorkspaceSpecial(id))
         return;
 
-    Debug::log(LOG, "renameWorkspace: Renaming workspace %d to '%s'", id, name.c_str());
-    wlr_ext_workspace_handle_v1_set_name(PWORKSPACE->m_pWlrHandle, name.c_str());
+    Debug::log(LOG, "renameWorkspace: Renaming workspace {} to '{}'", id, name);
     PWORKSPACE->m_szName = name;
+
+    g_pEventManager->postEvent({"renameworkspace", std::to_string(PWORKSPACE->m_iID) + "," + PWORKSPACE->m_szName});
 }
 
 void CCompositor::setActiveMonitor(CMonitor* pMonitor) {
@@ -2507,14 +2478,14 @@ void CCompositor::arrangeMonitors() {
     for (auto& m : m_vMonitors)
         toArrange.push_back(m.get());
 
-    Debug::log(LOG, "arrangeMonitors: %llu to arrange", toArrange.size());
+    Debug::log(LOG, "arrangeMonitors: {} to arrange", toArrange.size());
 
     for (auto it = toArrange.begin(); it != toArrange.end();) {
         auto m = *it;
 
         if (m->activeMonitorRule.offset != Vector2D{-INT32_MAX, -INT32_MAX}) {
             // explicit.
-            Debug::log(LOG, "arrangeMonitors: %s explicit [%.2f, %.2f]", m->szName.c_str(), m->activeMonitorRule.offset.x, m->activeMonitorRule.offset.y);
+            Debug::log(LOG, "arrangeMonitors: {} explicit [{:.2f}, {:.2f}]", m->szName, m->activeMonitorRule.offset.x, m->activeMonitorRule.offset.y);
 
             m->moveTo(m->activeMonitorRule.offset);
             arranged.push_back(m);
@@ -2537,7 +2508,7 @@ void CCompositor::arrangeMonitors() {
     }
 
     for (auto& m : toArrange) {
-        Debug::log(LOG, "arrangeMonitors: %s auto [%i, %.2f]", m->szName.c_str(), maxOffset, 0);
+        Debug::log(LOG, "arrangeMonitors: {} auto [{}, {:.2f}]", m->szName, maxOffset, 0.f);
         m->moveTo({maxOffset, 0});
         maxOffset += m->vecSize.x;
     }
@@ -2546,7 +2517,7 @@ void CCompositor::arrangeMonitors() {
     // and set xwayland positions aka auto for all
     maxOffset = 0;
     for (auto& m : m_vMonitors) {
-        Debug::log(LOG, "arrangeMonitors: %s xwayland [%i, %.2f]", m->szName.c_str(), maxOffset, 0);
+        Debug::log(LOG, "arrangeMonitors: {} xwayland [{}, {:.2f}]", m->szName, maxOffset, 0.f);
         m->vecXWaylandPosition = {maxOffset, 0};
         maxOffset += (*PXWLFORCESCALEZERO ? m->vecTransformedSize.x : m->vecSize.x);
     }
