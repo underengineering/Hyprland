@@ -2,7 +2,7 @@
 #include "../defines.hpp"
 #include "../Compositor.hpp"
 
-void IHyprLayout::onWindowCreated(CWindow* pWindow) {
+void IHyprLayout::onWindowCreated(CWindow* pWindow, eDirection direction) {
     if (pWindow->m_bIsFloating) {
         onWindowCreatedFloating(pWindow);
     } else {
@@ -18,7 +18,7 @@ void IHyprLayout::onWindowCreated(CWindow* pWindow) {
 
         pWindow->m_vPseudoSize = pWindow->m_vLastFloatingSize;
 
-        onWindowCreatedTiling(pWindow);
+        onWindowCreatedTiling(pWindow, direction);
     }
 }
 
@@ -511,8 +511,7 @@ CWindow* IHyprLayout::getNextWindowCandidate(CWindow* pWindow) {
             return m_pLastTiledWindow;
 
         // if we don't, let's try to find any window that is in the middle
-        if (const auto PWINDOWCANDIDATE = g_pCompositor->vectorToWindowIdeal(pWindow->m_vRealPosition.goalv() + pWindow->m_vRealSize.goalv() / 2.f);
-            PWINDOWCANDIDATE && PWINDOWCANDIDATE != pWindow)
+        if (const auto PWINDOWCANDIDATE = g_pCompositor->vectorToWindowIdeal(pWindow->middle()); PWINDOWCANDIDATE && PWINDOWCANDIDATE != pWindow)
             return PWINDOWCANDIDATE;
 
         // if not, floating window
@@ -527,7 +526,7 @@ CWindow* IHyprLayout::getNextWindowCandidate(CWindow* pWindow) {
     }
 
     // if it was a tiled window, we first try to find the window that will replace it.
-    const auto PWINDOWCANDIDATE = g_pCompositor->vectorToWindowIdeal(pWindow->m_vRealPosition.goalv() + pWindow->m_vRealSize.goalv() / 2.f);
+    const auto PWINDOWCANDIDATE = g_pCompositor->vectorToWindowIdeal(pWindow->middle());
 
     if (!PWINDOWCANDIDATE || pWindow == PWINDOWCANDIDATE || !PWINDOWCANDIDATE->m_bIsMapped || PWINDOWCANDIDATE->isHidden() || PWINDOWCANDIDATE->m_bX11ShouldntFocus ||
         PWINDOWCANDIDATE->m_iX11Type == 2 || PWINDOWCANDIDATE->m_iMonitorID != g_pCompositor->m_pLastMonitor->ID)
@@ -536,12 +535,22 @@ CWindow* IHyprLayout::getNextWindowCandidate(CWindow* pWindow) {
     return PWINDOWCANDIDATE;
 }
 
-void IHyprLayout::requestFocusForWindow(CWindow* pWindow) {
+bool IHyprLayout::isWindowReachable(CWindow* pWindow) {
+    return pWindow && (!pWindow->isHidden() || pWindow->m_sGroupData.pNextWindow);
+}
+
+void IHyprLayout::bringWindowToTop(CWindow* pWindow) {
+    if (pWindow == nullptr)
+        return;
+
     if (pWindow->isHidden() && pWindow->m_sGroupData.pNextWindow) {
         // grouped, change the current to this window
         pWindow->setGroupCurrent(pWindow);
     }
+}
 
+void IHyprLayout::requestFocusForWindow(CWindow* pWindow) {
+    bringWindowToTop(pWindow);
     g_pCompositor->focusWindow(pWindow);
 }
 

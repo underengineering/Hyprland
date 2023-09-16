@@ -86,8 +86,6 @@ void CMonitor::onConnect(bool noRule) {
         if (!wlr_output_commit(output))
             Debug::log(ERR, "Couldn't commit disabled state on output {}", output->name);
 
-        Events::listener_change(nullptr, nullptr);
-
         m_bEnabled = false;
 
         hyprListener_monitorFrame.removeCallback();
@@ -630,4 +628,8 @@ void CMonitor::moveTo(const Vector2D& pos) {
 
     if (!isMirror())
         wlr_output_layout_add(g_pCompositor->m_sWLROutputLayout, output, (int)vecPosition.x, (int)vecPosition.y);
+}
+
+Vector2D CMonitor::middle() {
+    return vecPosition + vecSize / 2.f;
 }

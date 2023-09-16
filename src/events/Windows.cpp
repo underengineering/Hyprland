@@ -229,17 +229,16 @@ void Events::listener_mapWindow(void* owner, void* data) {
     if (PWINDOW->m_bPinned && !PWINDOW->m_bIsFloating)
         PWINDOW->m_bPinned = false;
 
-    const CVarList WORKSPACEARGS = CVarList(requestedWorkspace, 2, ' ');
+    const CVarList WORKSPACEARGS = CVarList(requestedWorkspace, 0, ' ');
 
     if (!WORKSPACEARGS[0].empty()) {
+        if (WORKSPACEARGS[WORKSPACEARGS.size() - 1].find("silent") == 0)
+            workspaceSilent = true;
+
         std::string requestedWorkspaceName;
-        const int   REQUESTEDWORKSPACEID = getWorkspaceIDFromString(WORKSPACEARGS[0], requestedWorkspaceName);
+        const int   REQUESTEDWORKSPACEID = getWorkspaceIDFromString(WORKSPACEARGS.join(" ", 0, workspaceSilent ? WORKSPACEARGS.size() - 1 : 0), requestedWorkspaceName);
 
         if (REQUESTEDWORKSPACEID != INT_MAX) {
-
-            if (WORKSPACEARGS[1].find("silent") == 0)
-                workspaceSilent = true;
-
             auto pWorkspace = g_pCompositor->getWorkspaceByID(REQUESTEDWORKSPACEID);
 
             if (!pWorkspace)
@@ -259,7 +258,8 @@ void Events::listener_mapWindow(void* owner, void* data) {
 
                 PMONITOR = g_pCompositor->m_pLastMonitor;
             }
-        }
+        } else
+            workspaceSilent = false;
     }
 
     if (PWINDOW->m_bIsFloating) {
@@ -322,6 +322,11 @@ void Events::listener_mapWindow(void* owner, void* data) {
                 try {
                     auto       value = r.szRule.substr(r.szRule.find(' ') + 1);
 
+                    const bool ONSCREEN = value.find("onscreen") == 0;
+
+                    if (ONSCREEN)
+                        value = value.substr(value.find_first_of(' ') + 1);
+
                     const bool CURSOR = value.find("cursor") == 0;
 
                     if (CURSOR)
@@ -334,8 +339,7 @@ void Events::listener_mapWindow(void* owner, void* data) {
                     int        posY = 0;
 
                     if (POSXSTR.find("100%-") == 0) {
-                        const auto PMONITOR = g_pCompositor->getMonitorFromID(PWINDOW->m_iMonitorID);
-                        const auto POSXRAW  = POSXSTR.substr(5);
+                        const auto POSXRAW = POSXSTR.substr(5);
                         posX =
                             PMONITOR->vecSize.x - (!POSXRAW.contains('%') ? std::stoi(POSXRAW) : std::stof(POSXRAW.substr(0, POSXRAW.length() - 1)) * 0.01 * PMONITOR->vecSize.x);
 
@@ -354,8 +358,7 @@ void Events::listener_mapWindow(void* owner, void* data) {
                     }
 
                     if (POSYSTR.find("100%-") == 0) {
-                        const auto PMONITOR = g_pCompositor->getMonitorFromID(PWINDOW->m_iMonitorID);
-                        const auto POSYRAW  = POSYSTR.substr(5);
+                        const auto POSYRAW = POSYSTR.substr(5);
                         posY =
                             PMONITOR->vecSize.y - (!POSYRAW.contains('%') ? std::stoi(POSYRAW) : std::stof(POSYRAW.substr(0, POSYRAW.length() - 1)) * 0.01 * PMONITOR->vecSize.y);
 
@@ -373,6 +376,16 @@ void Events::listener_mapWindow(void* owner, void* data) {
                         }
                     }
 
+                    if (ONSCREEN) {
+                        int borderSize = PWINDOW->getRealBorderSize();
+
+                        posX = std::clamp(posX, (int)(PMONITOR->vecReservedTopLeft.x + borderSize),
+                                          (int)(PMONITOR->vecSize.x - PMONITOR->vecReservedBottomRight.x - PWINDOW->m_vRealSize.goalv().x - borderSize));
+
+                        posY = std::clamp(posY, (int)(PMONITOR->vecReservedTopLeft.y + borderSize),
+                                          (int)(PMONITOR->vecSize.y - PMONITOR->vecReservedBottomRight.y - PWINDOW->m_vRealSize.goalv().y - borderSize));
+                    }
+
                     Debug::log(LOG, "Rule move, applying to window {:x}", (uintptr_t)PWINDOW);
 
                     PWINDOW->m_vRealPosition = Vector2D(posX, posY) + PMONITOR->vecPosition;
@@ -385,7 +398,7 @@ void Events::listener_mapWindow(void* owner, void* data) {
                 if (ARGS[1] == "1")
                     RESERVEDOFFSET = (PMONITOR->vecReservedTopLeft - PMONITOR->vecReservedBottomRight) / 2.f;
 
-                PWINDOW->m_vRealPosition = PMONITOR->vecPosition + PMONITOR->vecSize / 2.f - PWINDOW->m_vRealSize.goalv() / 2.f + RESERVEDOFFSET;
+                PWINDOW->m_vRealPosition = PMONITOR->middle() - PWINDOW->m_vRealSize.goalv() / 2.f + RESERVEDOFFSET;
             }
         }
 
@@ -893,8 +906,7 @@ void Events::listener_activateXDG(wl_listener* listener, void* data) {
         g_pCompositor->moveWindowToTop(PWINDOW);
 
     g_pCompositor->focusWindow(PWINDOW);
-    Vector2D middle = PWINDOW->m_vRealPosition.goalv() + PWINDOW->m_vRealSize.goalv() / 2.f;
-    g_pCompositor->warpCursorTo(middle);
+    g_pCompositor->warpCursorTo(PWINDOW->middle());
 }
 
 void Events::listener_activateX11(void* owner, void* data) {
@@ -928,8 +940,7 @@ void Events::listener_activateX11(void* owner, void* data) {
         g_pCompositor->moveWindowToTop(PWINDOW);
 
     g_pCompositor->focusWindow(PWINDOW);
-    Vector2D middle = PWINDOW->m_vRealPosition.goalv() + PWINDOW->m_vRealSize.goalv() / 2.f;
-    g_pCompositor->warpCursorTo(middle);
+    g_pCompositor->warpCursorTo(PWINDOW->middle());
 }
 
 void Events::listener_configureX11(void* owner, void* data) {
