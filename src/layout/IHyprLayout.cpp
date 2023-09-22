@@ -89,7 +89,7 @@ void IHyprLayout::onWindowCreatedFloating(CWindow* pWindow) {
     static auto* const PXWLFORCESCALEZERO = &g_pConfigManager->getConfigValuePtr("xwayland:force_zero_scaling")->intValue;
 
     if (!PMONITOR) {
-        Debug::log(ERR, "Window {:x} ({}) has an invalid monitor in onWindowCreatedFloating!!!", (uintptr_t)pWindow, pWindow->m_szTitle);
+        Debug::log(ERR, "{:m} has an invalid monitor in onWindowCreatedFloating!!!", pWindow);
         return;
     }
 
@@ -161,7 +161,7 @@ void IHyprLayout::onWindowCreatedFloating(CWindow* pWindow) {
     if (pWindow->m_iX11Type != 2) {
         g_pXWaylandManager->setWindowSize(pWindow, pWindow->m_vRealSize.goalv());
 
-        g_pCompositor->moveWindowToTop(pWindow);
+        g_pCompositor->changeWindowZOrder(pWindow, true);
     }
 }
 
@@ -237,7 +237,7 @@ void IHyprLayout::onBeginDragWindow() {
     g_pKeybindManager->shadowKeybinds();
 
     g_pCompositor->focusWindow(DRAGGINGWINDOW);
-    g_pCompositor->moveWindowToTop(DRAGGINGWINDOW);
+    g_pCompositor->changeWindowZOrder(DRAGGINGWINDOW, true);
 }
 
 void IHyprLayout::onEndDragWindow() {
@@ -402,7 +402,7 @@ void IHyprLayout::changeWindowFloatingMode(CWindow* pWindow) {
     const auto TILED = isWindowTiled(pWindow);
 
     // event
-    g_pEventManager->postEvent(SHyprIPCEvent{"changefloatingmode", getFormat("{:x},{}", (uintptr_t)pWindow, (int)TILED)});
+    g_pEventManager->postEvent(SHyprIPCEvent{"changefloatingmode", std::format("{:x},{}", (uintptr_t)pWindow, (int)TILED)});
     EMIT_HOOK_EVENT("changeFloatingMode", pWindow);
 
     if (!TILED) {
@@ -436,7 +436,7 @@ void IHyprLayout::changeWindowFloatingMode(CWindow* pWindow) {
     } else {
         onWindowRemovedTiling(pWindow);
 
-        g_pCompositor->moveWindowToTop(pWindow);
+        g_pCompositor->changeWindowZOrder(pWindow, true);
 
         if (DELTALESSTHAN(pWindow->m_vRealSize.vec().x, pWindow->m_vLastFloatingSize.x, 10) && DELTALESSTHAN(pWindow->m_vRealSize.vec().y, pWindow->m_vLastFloatingSize.y, 10)) {
             pWindow->m_vRealPosition = pWindow->m_vRealPosition.goalv() + (pWindow->m_vRealSize.goalv() - pWindow->m_vLastFloatingSize) / 2.f + Vector2D{10, 10};

@@ -144,26 +144,25 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
         } else {
             // Native Wayland apps know how 2 constrain themselves.
             // XWayland, we just have to accept them. Might cause issues, but thats XWayland for ya.
-            const auto CONSTRAINTPOS =
-                CONSTRAINTWINDOW->m_bIsX11 ? Vector2D(CONSTRAINTWINDOW->m_uSurface.xwayland->x, CONSTRAINTWINDOW->m_uSurface.xwayland->y) : CONSTRAINTWINDOW->m_vRealPosition.vec();
-            const auto CONSTRAINTSIZE = CONSTRAINTWINDOW->m_bIsX11 ? Vector2D(CONSTRAINTWINDOW->m_uSurface.xwayland->width, CONSTRAINTWINDOW->m_uSurface.xwayland->height) :
-                                                                     CONSTRAINTWINDOW->m_vRealSize.vec();
+            const auto CONSTRAINTPOS  = PCONSTRAINT->getLogicConstraintPos();
+            const auto CONSTRAINTSIZE = PCONSTRAINT->getLogicConstraintSize();
 
             if (g_pCompositor->m_sSeat.mouse->currentConstraint->type == WLR_POINTER_CONSTRAINT_V1_LOCKED) {
                 // we just snap the cursor to where it should be.
 
-                Vector2D hint = {PCONSTRAINT->positionHint.x, PCONSTRAINT->positionHint.y};
-
-                if (hint != Vector2D{-1, -1})
-                    wlr_cursor_warp_closest(g_pCompositor->m_sWLRCursor, g_pCompositor->m_sSeat.mouse->mouse, CONSTRAINTPOS.x + hint.x, CONSTRAINTPOS.y + hint.y);
+                if (PCONSTRAINT->hintSet)
+                    wlr_cursor_warp_closest(g_pCompositor->m_sWLRCursor, g_pCompositor->m_sSeat.mouse->mouse, CONSTRAINTPOS.x + PCONSTRAINT->positionHint.x,
+                                            CONSTRAINTPOS.y + PCONSTRAINT->positionHint.y);
 
                 return; // don't process anything else, the cursor is locked. The surface should not receive any further events.
                         // these are usually FPS games. They will use the relative motion.
             } else {
                 // we restrict the cursor to the confined region
-                if (!pixman_region32_contains_point(&PCONSTRAINT->constraint->region, mouseCoords.x - CONSTRAINTPOS.x, mouseCoords.y - CONSTRAINTPOS.y, nullptr)) {
+                const auto REGION = PCONSTRAINT->getLogicCoordsRegion();
+
+                if (!REGION.containsPoint(mouseCoords)) {
                     if (g_pCompositor->m_sSeat.mouse->constraintActive) {
-                        const auto CLOSEST = CRegion(&PCONSTRAINT->constraint->region).closestPoint(mouseCoords - CONSTRAINTPOS) + CONSTRAINTPOS;
+                        const auto CLOSEST = REGION.closestPoint(mouseCoords);
                         wlr_cursor_warp_closest(g_pCompositor->m_sWLRCursor, NULL, CLOSEST.x, CLOSEST.y);
                         mouseCoords = getMouseCoordsInternal();
                     }
@@ -205,10 +204,7 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
             foundSurface = g_pCompositor->m_pLastFocus;
             pFoundWindow = g_pCompositor->m_pLastWindow;
 
-            if (!g_pCompositor->m_pLastWindow->m_bIsX11)
-                foundSurface = g_pCompositor->vectorWindowToSurface(mouseCoords, g_pCompositor->m_pLastWindow, surfaceCoords);
-            else
-                surfacePos = g_pCompositor->m_pLastWindow->m_vRealPosition.vec();
+            surfacePos = g_pCompositor->m_pLastWindow->m_vRealPosition.vec();
 
             m_bFocusHeldByButtons   = true;
             m_bRefocusHeldByButtons = refocus;
@@ -248,17 +244,12 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
             return;
         }
 
-        // only check floating because tiled cant be over fullscreen
-        for (auto& w : g_pCompositor->m_vWindows | std::views::reverse) {
-            wlr_box box = {w->m_vRealPosition.vec().x - BORDER_GRAB_AREA, w->m_vRealPosition.vec().y - BORDER_GRAB_AREA, w->m_vRealSize.vec().x + 2 * BORDER_GRAB_AREA,
-                           w->m_vRealSize.vec().y + 2 * BORDER_GRAB_AREA};
-            if (((w->m_bIsFloating && w->m_bIsMapped && (w->m_bCreatedOverFullscreen || w->m_bPinned)) ||
-                 (g_pCompositor->isWorkspaceSpecial(w->m_iWorkspaceID) && PMONITOR->specialWorkspaceID)) &&
-                wlr_box_contains_point(&box, mouseCoords.x, mouseCoords.y) && g_pCompositor->isWorkspaceVisible(w->m_iWorkspaceID) && !w->isHidden()) {
-                pFoundWindow = w.get();
-                break;
-            }
-        }
+        const auto PWINDOWIDEAL = g_pCompositor->vectorToWindowIdeal(mouseCoords);
+
+        if (PWINDOWIDEAL &&
+            ((PWINDOWIDEAL->m_bIsFloating && PWINDOWIDEAL->m_bCreatedOverFullscreen) /* floating over fullscreen */
+             || (PMONITOR->specialWorkspaceID == PWINDOWIDEAL->m_iWorkspaceID) /* on an open special workspace */))
+            pFoundWindow = PWINDOWIDEAL;
 
         if (!pFoundWindow->m_bIsX11) {
             foundSurface = g_pCompositor->vectorWindowToSurface(mouseCoords, pFoundWindow, surfaceCoords);
@@ -604,7 +595,7 @@ void CInputManager::processMouseDownNormal(wlr_pointer_button_event* e) {
 
             // if clicked on a floating window make it top
             if (g_pCompositor->m_pLastWindow && g_pCompositor->m_pLastWindow->m_bIsFloating)
-                g_pCompositor->moveWindowToTop(g_pCompositor->m_pLastWindow);
+                g_pCompositor->changeWindowZOrder(g_pCompositor->m_pLastWindow, true);
 
             break;
         case WLR_BUTTON_RELEASED: break;
@@ -1290,7 +1281,8 @@ void CInputManager::unconstrainMouse() {
     wlr_pointer_constraint_v1_send_deactivated(g_pCompositor->m_sSeat.mouse->currentConstraint);
 
     const auto PCONSTRAINT = constraintFromWlr(g_pCompositor->m_sSeat.mouse->currentConstraint);
-    PCONSTRAINT->active    = false;
+    if (PCONSTRAINT)
+        PCONSTRAINT->active = false;
 
     g_pCompositor->m_sSeat.mouse->constraintActive = false;
 

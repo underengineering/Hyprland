@@ -17,6 +17,8 @@ extern "C" char** environ;
 CConfigManager::CConfigManager() {
     configValues["general:col.active_border"].data              = std::make_shared<CGradientValueData>(0xffffffff);
     configValues["general:col.inactive_border"].data            = std::make_shared<CGradientValueData>(0xff444444);
+    configValues["general:col.nogroup_border"].data             = std::make_shared<CGradientValueData>(0xffffaaff);
+    configValues["general:col.nogroup_border_active"].data      = std::make_shared<CGradientValueData>(0xffff00ff);
     configValues["general:col.group_border"].data               = std::make_shared<CGradientValueData>(0x66777700);
     configValues["general:col.group_border_active"].data        = std::make_shared<CGradientValueData>(0x66ffff00);
     configValues["general:col.group_border_locked"].data        = std::make_shared<CGradientValueData>(0x66775500);
@@ -72,6 +74,8 @@ void CConfigManager::setDefaultVars() {
     configValues["general:gaps_out"].intValue              = 20;
     ((CGradientValueData*)configValues["general:col.active_border"].data.get())->reset(0xffffffff);
     ((CGradientValueData*)configValues["general:col.inactive_border"].data.get())->reset(0xff444444);
+    ((CGradientValueData*)configValues["general:col.nogroup_border"].data.get())->reset(0xff444444);
+    ((CGradientValueData*)configValues["general:col.nogroup_border_active"].data.get())->reset(0xffff00ff);
     ((CGradientValueData*)configValues["general:col.group_border"].data.get())->reset(0x66777700);
     ((CGradientValueData*)configValues["general:col.group_border_active"].data.get())->reset(0x66ffff00);
     ((CGradientValueData*)configValues["general:col.group_border_locked"].data.get())->reset(0x66775500);
@@ -86,6 +90,7 @@ void CConfigManager::setDefaultVars() {
 
     configValues["misc:disable_hyprland_logo"].intValue        = 0;
     configValues["misc:disable_splash_rendering"].intValue     = 0;
+    configValues["misc:disable_hypr_chan"].intValue            = 0;
     configValues["misc:force_hypr_chan"].intValue              = 0;
     configValues["misc:vfr"].intValue                          = 1;
     configValues["misc:vrr"].intValue                          = 0;
@@ -903,7 +908,7 @@ bool windowRuleValid(const std::string& RULE) {
              RULE != "nomaximizerequest" && RULE != "fakefullscreen" && RULE != "nomaxsize" && RULE != "pin" && RULE != "noanim" && RULE != "dimaround" && RULE != "windowdance" &&
              RULE != "maximize" && RULE != "keepaspectratio" && RULE.find("animation") != 0 && RULE.find("rounding") != 0 && RULE.find("workspace") != 0 &&
              RULE.find("bordercolor") != 0 && RULE != "forcergbx" && RULE != "noinitialfocus" && RULE != "stayfocused" && RULE.find("bordersize") != 0 && RULE.find("xray") != 0 &&
-             RULE.find("center") != 0);
+             RULE.find("center") != 0 && RULE.find("group") != 0);
 }
 
 bool layerRuleValid(const std::string& RULE) {
@@ -1096,7 +1101,7 @@ void CConfigManager::updateBlurredLS(const std::string& name, const bool forceBl
         for (auto& lsl : m->m_aLayerSurfaceLayers) {
             for (auto& ls : lsl) {
                 if (BYADDRESS) {
-                    if (getFormat("0x{:x}", (uintptr_t)ls.get()) == matchName)
+                    if (std::format("0x{:x}", (uintptr_t)ls.get()) == matchName)
                         ls->forceBlur = forceBlur;
                 } else if (ls->szNamespace == matchName)
                     ls->forceBlur = forceBlur;
@@ -1205,7 +1210,7 @@ void CConfigManager::handleSource(const std::string& command, const std::string&
 
     if (auto r = glob(absolutePath(rawpath, configCurrentPath).c_str(), GLOB_TILDE, nullptr, glob_buf.get()); r != 0) {
         parseError = std::format("source= globbing error: {}", r == GLOB_NOMATCH ? "found no match" : GLOB_ABORTED ? "read error" : "out of memory");
-        Debug::log(ERR, parseError);
+        Debug::log(ERR, "{}", parseError);
         return;
     }
 
@@ -1903,7 +1908,7 @@ std::vector<SWindowRule> CConfigManager::getMatchingRules(CWindow* pWindow) {
         }
 
         // applies. Read the rule and behave accordingly
-        Debug::log(LOG, "Window rule {} -> {} matched {:x} [{}]", rule.szRule, rule.szValue, (uintptr_t)pWindow, pWindow->m_szTitle);
+        Debug::log(LOG, "Window rule {} -> {} matched {}", rule.szRule, rule.szValue, pWindow);
 
         returns.push_back(rule);
 
@@ -1941,7 +1946,7 @@ std::vector<SLayerRule> CConfigManager::getMatchingRules(SLayerSurface* pLS) {
 
     for (auto& lr : m_dLayerRules) {
         if (lr.targetNamespace.find("address:0x") == 0) {
-            if (getFormat("address:0x{:x}", (uintptr_t)pLS) != lr.targetNamespace)
+            if (std::format("address:0x{:x}", (uintptr_t)pLS) != lr.targetNamespace)
                 continue;
         } else {
             std::regex NSCHECK(lr.targetNamespace);
