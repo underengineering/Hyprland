@@ -87,6 +87,7 @@ void CConfigManager::setDefaultVars() {
     configValues["general:extend_border_grab_area"].intValue = 15;
     configValues["general:hover_icon_on_border"].intValue    = 1;
     configValues["general:layout"].strValue                  = "dwindle";
+    configValues["general:allow_tearing"].intValue           = 0;
 
     configValues["misc:disable_hyprland_logo"].intValue        = 0;
     configValues["misc:disable_splash_rendering"].intValue     = 0;
@@ -133,6 +134,7 @@ void CConfigManager::setDefaultVars() {
     configValues["debug:damage_tracking"].intValue    = DAMAGE_TRACKING_FULL;
     configValues["debug:manual_crash"].intValue       = 0;
     configValues["debug:suppress_errors"].intValue    = 0;
+    configValues["debug:watchdog_timeout"].intValue   = 5;
 
     configValues["decoration:rounding"].intValue               = 0;
     configValues["decoration:blur:enabled"].intValue           = 1;
@@ -148,7 +150,6 @@ void CConfigManager::setDefaultVars() {
     configValues["decoration:active_opacity"].floatValue       = 1;
     configValues["decoration:inactive_opacity"].floatValue     = 1;
     configValues["decoration:fullscreen_opacity"].floatValue   = 1;
-    configValues["decoration:multisample_edges"].intValue      = 1;
     configValues["decoration:no_blur_on_oversized"].intValue   = 0;
     configValues["decoration:drop_shadow"].intValue            = 1;
     configValues["decoration:shadow_range"].intValue           = 4;
@@ -222,6 +223,8 @@ void CConfigManager::setDefaultVars() {
     configValues["input:touchdevice:output"].strValue               = STRVAL_EMPTY;
     configValues["input:tablet:transform"].intValue                 = 0;
     configValues["input:tablet:output"].strValue                    = STRVAL_EMPTY;
+    configValues["input:tablet:region_position"].vecValue           = Vector2D();
+    configValues["input:tablet:region_size"].vecValue               = Vector2D();
 
     configValues["binds:pass_mouse_when_bound"].intValue    = 0;
     configValues["binds:scroll_event_delay"].intValue       = 300;
@@ -277,7 +280,9 @@ void CConfigManager::setDeviceDefaultVars(const std::string& dev) {
     cfgValues["scroll_button_lock"].intValue      = 0;
     cfgValues["transform"].intValue               = 0;
     cfgValues["output"].strValue                  = STRVAL_EMPTY;
-    cfgValues["enabled"].intValue                 = 1; // only for mice / touchpads
+    cfgValues["enabled"].intValue                 = 1;          // only for mice / touchpads
+    cfgValues["region_position"].vecValue         = Vector2D(); // only for tablets
+    cfgValues["region_size"].vecValue             = Vector2D(); // only for tablets
 }
 
 void CConfigManager::setDefaultAnimationVars() {
@@ -908,7 +913,7 @@ bool windowRuleValid(const std::string& RULE) {
              RULE != "nomaximizerequest" && RULE != "fakefullscreen" && RULE != "nomaxsize" && RULE != "pin" && RULE != "noanim" && RULE != "dimaround" && RULE != "windowdance" &&
              RULE != "maximize" && RULE != "keepaspectratio" && RULE.find("animation") != 0 && RULE.find("rounding") != 0 && RULE.find("workspace") != 0 &&
              RULE.find("bordercolor") != 0 && RULE != "forcergbx" && RULE != "noinitialfocus" && RULE != "stayfocused" && RULE.find("bordersize") != 0 && RULE.find("xray") != 0 &&
-             RULE.find("center") != 0 && RULE.find("group") != 0);
+             RULE.find("center") != 0 && RULE.find("group") != 0 && RULE != "immediate");
 }
 
 bool layerRuleValid(const std::string& RULE) {
@@ -970,7 +975,7 @@ void CConfigManager::handleLayerRule(const std::string& command, const std::stri
 }
 
 void CConfigManager::handleWindowRuleV2(const std::string& command, const std::string& value) {
-    const auto RULE  = value.substr(0, value.find_first_of(','));
+    const auto RULE  = removeBeginEndSpacesTabs(value.substr(0, value.find_first_of(',')));
     const auto VALUE = value.substr(value.find_first_of(',') + 1);
 
     if (!windowRuleValid(RULE) && RULE != "unset") {
@@ -1239,6 +1244,8 @@ void CConfigManager::handleSource(const std::string& command, const std::string&
         std::string line    = "";
         int         linenum = 1;
         if (ifs.is_open()) {
+            auto configCurrentPathBackup = configCurrentPath;
+
             while (std::getline(ifs, line)) {
                 // Read line by line.
                 try {
@@ -1259,6 +1266,8 @@ void CConfigManager::handleSource(const std::string& command, const std::string&
             }
 
             ifs.close();
+
+            configCurrentPath = configCurrentPathBackup;
         }
     }
 }
@@ -1733,6 +1742,10 @@ float CConfigManager::getFloat(const std::string& v) {
     return getConfigValueSafe(v).floatValue;
 }
 
+Vector2D CConfigManager::getVec(const std::string& v) {
+    return getConfigValueSafe(v).vecValue;
+}
+
 std::string CConfigManager::getString(const std::string& v) {
     auto VAL = getConfigValueSafe(v).strValue;
 
@@ -1750,6 +1763,10 @@ float CConfigManager::getDeviceFloat(const std::string& dev, const std::string& 
     return getConfigValueSafeDevice(dev, v, fallback).floatValue;
 }
 
+Vector2D CConfigManager::getDeviceVec(const std::string& dev, const std::string& v, const std::string& fallback) {
+    return getConfigValueSafeDevice(dev, v, fallback).vecValue;
+}
+
 std::string CConfigManager::getDeviceString(const std::string& dev, const std::string& v, const std::string& fallback) {
     auto VAL = getConfigValueSafeDevice(dev, v, fallback).strValue;
 
@@ -1765,6 +1782,10 @@ void CConfigManager::setInt(const std::string& v, int val) {
 
 void CConfigManager::setFloat(const std::string& v, float val) {
     configValues[v].floatValue = val;
+}
+
+void CConfigManager::setVec(const std::string& v, Vector2D val) {
+    configValues[v].vecValue = val;
 }
 
 void CConfigManager::setString(const std::string& v, const std::string& val) {
@@ -2019,9 +2040,6 @@ void CConfigManager::performMonitorReload() {
 
     if (overAgain)
         performMonitorReload();
-
-    if (!g_pCompositor->m_vMonitors.empty()) // reset unsafe state if we have monitors
-        g_pCompositor->m_bUnsafeState = false;
 
     m_bWantsMonitorReload = false;
 

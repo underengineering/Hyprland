@@ -245,6 +245,21 @@ void Events::listener_commitSubsurface(void* owner, void* data) {
 
     if (pNode->pSurface && pNode->pSurface->exists())
         g_pHyprRenderer->damageSurface(pNode->pSurface->wlr(), lx, ly, SCALE);
+
+    if (pNode->pWindowOwner) {
+        // tearing: if solitary, redraw it. This still might be a single surface window
+        const auto PMONITOR = g_pCompositor->getMonitorFromID(pNode->pWindowOwner->m_iMonitorID);
+        if (PMONITOR->solitaryClient == pNode->pWindowOwner && pNode->pWindowOwner->canBeTorn() && PMONITOR->canTear) {
+
+            CRegion damageBox;
+            wlr_surface_get_effective_damage(pNode->pSurface->wlr(), damageBox.pixman());
+
+            if (!damageBox.empty()) {
+                PMONITOR->nextRenderTorn = true;
+                g_pHyprRenderer->renderMonitor(PMONITOR);
+            }
+        }
+    }
 }
 
 void Events::listener_destroySubsurface(void* owner, void* data) {

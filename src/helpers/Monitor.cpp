@@ -40,6 +40,8 @@ void CMonitor::onConnect(bool noRule) {
     hyprListener_monitorCommit.initCallback(&output->events.commit, &Events::listener_monitorCommit, this);
     hyprListener_monitorBind.initCallback(&output->events.bind, &Events::listener_monitorBind, this);
 
+    canTear = wlr_backend_is_drm(output->backend); // tearing only works on drm
+
     if (m_bEnabled) {
         wlr_output_enable(output, 1);
         wlr_output_commit(output);
@@ -243,7 +245,7 @@ void CMonitor::onDisconnect() {
 
     if (!BACKUPMON) {
         Debug::log(WARN, "Unplugged last monitor, entering an unsafe state. Good luck my friend.");
-        g_pCompositor->m_bUnsafeState = true;
+        g_pCompositor->enterUnsafeState();
     }
 
     if (BACKUPMON) {
@@ -616,6 +618,8 @@ void CMonitor::setSpecialWorkspace(CWorkspace* const pWorkspace) {
         g_pInputManager->refocus();
 
     g_pEventManager->postEvent(SHyprIPCEvent{"activespecial", pWorkspace->m_szName + "," + szName});
+
+    g_pHyprRenderer->damageMonitor(this);
 }
 
 void CMonitor::setSpecialWorkspace(const int& id) {
