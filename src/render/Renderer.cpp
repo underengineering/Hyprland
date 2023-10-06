@@ -846,10 +846,8 @@ void CHyprRenderer::renderMonitor(CMonitor* pMonitor) {
 
     // tearing and DS first
     bool shouldTear = false;
-    bool canTear    = *PTEARINGENABLED && g_pHyprOpenGL->m_RenderData.mouseZoomFactor == 1.0;
-    recheckSolitaryForMonitor(pMonitor);
-    if (pMonitor->nextRenderTorn) {
-        pMonitor->nextRenderTorn = false;
+    if (pMonitor->tearingState.nextRenderTorn) {
+        pMonitor->tearingState.nextRenderTorn = false;
 
         if (!*PTEARINGENABLED) {
             Debug::log(WARN, "Tearing commit requested but the master switch general:allow_tearing is off, ignoring");
@@ -861,18 +859,13 @@ void CHyprRenderer::renderMonitor(CMonitor* pMonitor) {
             return;
         }
 
-        if (!pMonitor->canTear) {
+        if (!pMonitor->tearingState.canTear) {
             Debug::log(WARN, "Tearing commit requested but monitor doesn't support it, ignoring");
             return;
         }
 
         if (pMonitor->solitaryClient)
             shouldTear = true;
-    } else {
-        // if this is a non-tearing commit, and we are in a state where we should tear
-        // then this is a vblank commit that we should ignore
-        if (canTear && pMonitor->solitaryClient && pMonitor->canTear && pMonitor->solitaryClient->canBeTorn() && pMonitor->renderingFromVblankEvent)
-            return;
     }
 
     if (!*PNODIRECTSCANOUT && !shouldTear) {
@@ -881,6 +874,15 @@ void CHyprRenderer::renderMonitor(CMonitor* pMonitor) {
         } else if (m_pLastScanout) {
             Debug::log(LOG, "Left a direct scanout.");
             m_pLastScanout = nullptr;
+        }
+    }
+
+    if (pMonitor->tearingState.activelyTearing != shouldTear) {
+        // change of state
+        pMonitor->tearingState.activelyTearing = shouldTear;
+
+        for (auto& m : g_pCompositor->m_vMonitors) {
+            wlr_output_lock_software_cursors(m->output, pMonitor->tearingState.activelyTearing);
         }
     }
 
@@ -1081,7 +1083,7 @@ void CHyprRenderer::renderMonitor(CMonitor* pMonitor) {
     }
 
     if (shouldTear)
-        pMonitor->ignoreNextFlipEvent = true;
+        pMonitor->tearingState.busy = true;
 
     wlr_damage_ring_rotate(&pMonitor->damage);
 
@@ -1272,18 +1274,18 @@ void CHyprRenderer::arrangeLayerArray(CMonitor* pMonitor, const std::vector<std:
 
         const auto PLAYER = ls->layerSurface;
         const auto PSTATE = &PLAYER->current;
-        if (exclusiveZone != (PSTATE->exclusive_zone > 0)) {
+        if (exclusiveZone != (PSTATE->exclusive_zone > 0))
             continue;
-        }
 
         wlr_box bounds;
-        if (PSTATE->exclusive_zone == -1) {
+        if (PSTATE->exclusive_zone == -1)
             bounds = full_area;
-        } else {
+        else
             bounds = *usableArea;
-        }
 
-        wlr_box box = {.width = PSTATE->desired_width, .height = PSTATE->desired_height};
+        const Vector2D OLDSIZE = {ls->geometry.width, ls->geometry.height};
+
+        wlr_box        box = {.width = PSTATE->desired_width, .height = PSTATE->desired_height};
         // Horizontal axis
         const uint32_t both_horiz = ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT | ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
         if (box.width == 0) {
@@ -1340,7 +1342,8 @@ void CHyprRenderer::arrangeLayerArray(CMonitor* pMonitor, const std::vector<std:
 
         apply_exclusive(usableArea, PSTATE->anchor, PSTATE->exclusive_zone, PSTATE->margin.top, PSTATE->margin.right, PSTATE->margin.bottom, PSTATE->margin.left);
 
-        wlr_layer_surface_v1_configure(ls->layerSurface, box.width, box.height);
+        if (Vector2D{box.width, box.height} != OLDSIZE)
+            wlr_layer_surface_v1_configure(ls->layerSurface, box.width, box.height);
 
         Debug::log(LOG, "LayerSurface {:x} arranged: x: {} y: {} w: {} h: {} with margins: t: {} l: {} r: {} b: {}", (uintptr_t)&ls, box.x, box.y, box.width, box.height,
                    PSTATE->margin.top, PSTATE->margin.left, PSTATE->margin.right, PSTATE->margin.bottom);
@@ -2042,6 +2045,14 @@ void CHyprRenderer::recheckSolitaryForMonitor(CMonitor* pMonitor) {
             return;
     }
 
+    for (auto& w : g_pCompositor->m_vWindows) {
+        if (w->m_iWorkspaceID == PCANDIDATE->m_iWorkspaceID && w->m_bIsFloating && w->m_bCreatedOverFullscreen && !w->isHidden() && w->m_bIsMapped && w.get() != PCANDIDATE)
+            return;
+    }
+
+    if (pMonitor->specialWorkspaceID != 0)
+        return;
+
     // check if it did not open any subsurfaces or shit
     int surfaceCount = 0;
     if (PCANDIDATE->m_bIsX11) {
@@ -2051,8 +2062,8 @@ void CHyprRenderer::recheckSolitaryForMonitor(CMonitor* pMonitor) {
         wlr_xdg_surface_for_each_popup_surface(PCANDIDATE->m_uSurface.xdg, countSubsurfacesIter, &surfaceCount);
     }
 
-    if (surfaceCount != 1)
-        Debug::log(LOG, "fuf: >1 surf");
+    if (surfaceCount > 1)
+        return;
 
     // found one!
     pMonitor->solitaryClient = PCANDIDATE;

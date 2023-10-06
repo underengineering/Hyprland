@@ -133,6 +133,8 @@ void CCompositor::initServer() {
     const auto LOGWLR = getenv("HYPRLAND_LOG_WLR");
     if (LOGWLR && std::string(LOGWLR) == "1")
         wlr_log_init(WLR_DEBUG, Debug::wlrLog);
+    else
+        wlr_log_init(WLR_ERROR, Debug::wlrLog);
 
     m_sWLRBackend = wlr_backend_autocreate(m_sWLDisplay, &m_sWLRSession);
 
@@ -891,6 +893,10 @@ void CCompositor::focusWindow(CWindow* pWindow, wlr_surface* pSurface) {
     g_pLayoutManager->getCurrentLayout()->bringWindowToTop(pWindow);
 
     if (!pWindow || !windowValidMapped(pWindow)) {
+
+        if (!m_pLastWindow && !pWindow)
+            return;
+
         const auto PLASTWINDOW = m_pLastWindow;
         m_pLastWindow          = nullptr;
 

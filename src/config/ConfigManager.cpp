@@ -89,40 +89,41 @@ void CConfigManager::setDefaultVars() {
     configValues["general:layout"].strValue                  = "dwindle";
     configValues["general:allow_tearing"].intValue           = 0;
 
-    configValues["misc:disable_hyprland_logo"].intValue        = 0;
-    configValues["misc:disable_splash_rendering"].intValue     = 0;
-    configValues["misc:disable_hypr_chan"].intValue            = 0;
-    configValues["misc:force_hypr_chan"].intValue              = 0;
-    configValues["misc:vfr"].intValue                          = 1;
-    configValues["misc:vrr"].intValue                          = 0;
-    configValues["misc:mouse_move_enables_dpms"].intValue      = 0;
-    configValues["misc:key_press_enables_dpms"].intValue       = 0;
-    configValues["misc:always_follow_on_dnd"].intValue         = 1;
-    configValues["misc:layers_hog_keyboard_focus"].intValue    = 1;
-    configValues["misc:animate_manual_resizes"].intValue       = 0;
-    configValues["misc:animate_mouse_windowdragging"].intValue = 0;
-    configValues["misc:disable_autoreload"].intValue           = 0;
-    configValues["misc:enable_swallow"].intValue               = 0;
-    configValues["misc:swallow_regex"].strValue                = STRVAL_EMPTY;
-    configValues["misc:swallow_exception_regex"].strValue      = STRVAL_EMPTY;
-    configValues["misc:focus_on_activate"].intValue            = 0;
-    configValues["misc:no_direct_scanout"].intValue            = 1;
-    configValues["misc:hide_cursor_on_touch"].intValue         = 1;
-    configValues["misc:mouse_move_focuses_monitor"].intValue   = 1;
-    configValues["misc:render_ahead_of_time"].intValue         = 0;
-    configValues["misc:render_ahead_safezone"].intValue        = 1;
-    configValues["misc:cursor_zoom_factor"].floatValue         = 1.f;
-    configValues["misc:cursor_zoom_rigid"].intValue            = 0;
-    configValues["misc:allow_session_lock_restore"].intValue   = 0;
-    configValues["misc:groupbar_scrolling"].intValue           = 1;
-    configValues["misc:group_insert_after_current"].intValue   = 1;
-    configValues["misc:group_focus_removed_window"].intValue   = 1;
-    configValues["misc:render_titles_in_groupbar"].intValue    = 1;
-    configValues["misc:groupbar_titles_font_size"].intValue    = 8;
-    configValues["misc:groupbar_gradients"].intValue           = 1;
-    configValues["misc:close_special_on_empty"].intValue       = 1;
-    configValues["misc:groupbar_text_color"].intValue          = 0xffffffff;
-    configValues["misc:background_color"].intValue             = 0xff111111;
+    configValues["misc:disable_hyprland_logo"].intValue            = 0;
+    configValues["misc:disable_splash_rendering"].intValue         = 0;
+    configValues["misc:disable_hypr_chan"].intValue                = 0;
+    configValues["misc:force_hypr_chan"].intValue                  = 0;
+    configValues["misc:vfr"].intValue                              = 1;
+    configValues["misc:vrr"].intValue                              = 0;
+    configValues["misc:mouse_move_enables_dpms"].intValue          = 0;
+    configValues["misc:key_press_enables_dpms"].intValue           = 0;
+    configValues["misc:always_follow_on_dnd"].intValue             = 1;
+    configValues["misc:layers_hog_keyboard_focus"].intValue        = 1;
+    configValues["misc:animate_manual_resizes"].intValue           = 0;
+    configValues["misc:animate_mouse_windowdragging"].intValue     = 0;
+    configValues["misc:disable_autoreload"].intValue               = 0;
+    configValues["misc:enable_swallow"].intValue                   = 0;
+    configValues["misc:swallow_regex"].strValue                    = STRVAL_EMPTY;
+    configValues["misc:swallow_exception_regex"].strValue          = STRVAL_EMPTY;
+    configValues["misc:focus_on_activate"].intValue                = 0;
+    configValues["misc:no_direct_scanout"].intValue                = 1;
+    configValues["misc:hide_cursor_on_touch"].intValue             = 1;
+    configValues["misc:mouse_move_focuses_monitor"].intValue       = 1;
+    configValues["misc:render_ahead_of_time"].intValue             = 0;
+    configValues["misc:render_ahead_safezone"].intValue            = 1;
+    configValues["misc:cursor_zoom_factor"].floatValue             = 1.f;
+    configValues["misc:cursor_zoom_rigid"].intValue                = 0;
+    configValues["misc:allow_session_lock_restore"].intValue       = 0;
+    configValues["misc:groupbar_scrolling"].intValue               = 1;
+    configValues["misc:group_insert_after_current"].intValue       = 1;
+    configValues["misc:group_focus_removed_window"].intValue       = 1;
+    configValues["misc:render_titles_in_groupbar"].intValue        = 1;
+    configValues["misc:groupbar_titles_font_size"].intValue        = 8;
+    configValues["misc:groupbar_gradients"].intValue               = 1;
+    configValues["misc:close_special_on_empty"].intValue           = 1;
+    configValues["misc:groupbar_text_color"].intValue              = 0xffffffff;
+    configValues["misc:background_color"].intValue                 = 0xff111111;
+    configValues["misc:new_window_takes_over_fullscreen"].intValue = 0;
 
     configValues["debug:int"].intValue                = 0;
     configValues["debug:log_damage"].intValue         = 0;
@@ -187,6 +188,7 @@ void CConfigManager::setDefaultVars() {
     configValues["master:inherit_fullscreen"].intValue     = 1;
     configValues["master:allow_small_split"].intValue      = 0;
     configValues["master:smart_resizing"].intValue         = 1;
+    configValues["master:drop_at_cursor"].intValue         = 1;
 
     configValues["animations:enabled"].intValue = 1;
 
@@ -1825,7 +1827,10 @@ SMonitorRule CConfigManager::getMonitorRuleFor(const std::string& name, const st
 }
 
 SWorkspaceRule CConfigManager::getWorkspaceRuleFor(CWorkspace* pWorkspace) {
-    const auto IT = std::find_if(m_dWorkspaceRules.begin(), m_dWorkspaceRules.end(), [&](const auto& other) { return other.workspaceName == pWorkspace->m_szName; });
+    const auto WORKSPACEIDSTR = std::to_string(pWorkspace->m_iID);
+    const auto IT             = std::find_if(m_dWorkspaceRules.begin(), m_dWorkspaceRules.end(), [&](const auto& other) {
+        return other.workspaceName == pWorkspace->m_szName || (pWorkspace->m_iID > 0 && WORKSPACEIDSTR == other.workspaceName);
+    });
     if (IT == m_dWorkspaceRules.end())
         return SWorkspaceRule{};
     return *IT;
