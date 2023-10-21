@@ -118,7 +118,7 @@ void CHyprMasterLayout::onWindowCreatedTiling(CWindow* pWindow, eDirection direc
             if (INDEX == -1)
                 std::swap(pWindow->m_sGroupData.pNextWindow->m_sGroupData.head, pWindow->m_sGroupData.head);
         } else {
-            static const auto* USECURRPOS = &g_pConfigManager->getConfigValuePtr("misc:group_insert_after_current")->intValue;
+            static const auto* USECURRPOS = &g_pConfigManager->getConfigValuePtr("group:insert_after_current")->intValue;
             (*USECURRPOS ? OPENINGON->pWindow : OPENINGON->pWindow->getGroupTail())->insertWindowToGroup(pWindow);
         }
 
@@ -139,6 +139,8 @@ void CHyprMasterLayout::onWindowCreatedTiling(CWindow* pWindow, eDirection direc
     if (*PDROPATCURSOR && g_pInputManager->dragMode == MBIND_MOVE) {
         // if dragging window to move, drop it at the cursor position instead of bottom/top of stack
         for (auto it = m_lMasterNodesData.begin(); it != m_lMasterNodesData.end(); ++it) {
+            if (it->workspaceID != pWindow->m_iWorkspaceID)
+                continue;
             const wlr_box box = it->pWindow->getWindowIdealBoundingBoxIgnoreReserved();
             if (wlr_box_contains_point(&box, MOUSECOORDS.x, MOUSECOORDS.y)) { // TODO: Deny when not using mouse
                 switch (orientation) {
@@ -740,8 +742,9 @@ void CHyprMasterLayout::resizeActiveWindow(const Vector2D& pixResize, eRectCorne
         default: UNREACHABLE();
     }
 
+    const auto workspaceIdForResizing = PMONITOR->specialWorkspaceID == 0 ? PMONITOR->activeWorkspace : PMONITOR->specialWorkspaceID;
     for (auto& n : m_lMasterNodesData) {
-        if (n.isMaster && n.workspaceID == PMONITOR->activeWorkspace)
+        if (n.isMaster && n.workspaceID == workspaceIdForResizing)
             n.percMaster = std::clamp(n.percMaster + delta, 0.05, 0.95);
     }
 
@@ -925,7 +928,16 @@ void CHyprMasterLayout::moveWindowTo(CWindow* pWindow, const std::string& dir) {
 
     const auto PWINDOW2 = g_pCompositor->getWindowInDirection(pWindow, dir[0]);
 
-    switchWindows(pWindow, PWINDOW2);
+    if (pWindow->m_iWorkspaceID != PWINDOW2->m_iWorkspaceID) {
+        // if different monitors, send to monitor
+        onWindowRemovedTiling(pWindow);
+        pWindow->moveToWorkspace(PWINDOW2->m_iWorkspaceID);
+        pWindow->m_iMonitorID = PWINDOW2->m_iMonitorID;
+        onWindowCreatedTiling(pWindow);
+    } else {
+        // if same monitor, switch windows
+        switchWindows(pWindow, PWINDOW2);
+    }
 }
 
 void CHyprMasterLayout::switchWindows(CWindow* pWindow, CWindow* pWindow2) {

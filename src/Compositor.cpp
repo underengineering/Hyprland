@@ -554,7 +554,7 @@ CMonitor* CCompositor::getMonitorFromName(const std::string& name) {
 
 CMonitor* CCompositor::getMonitorFromDesc(const std::string& desc) {
     for (auto& m : m_vMonitors) {
-        if (m->output->description && std::string(m->output->description).find(desc) == 0)
+        if (m->output->description && std::string(m->output->description).starts_with(desc))
             return m.get();
     }
     return nullptr;
@@ -1188,8 +1188,11 @@ void CCompositor::sanityCheckWorkspaces() {
     auto it = m_vWorkspaces.begin();
     while (it != m_vWorkspaces.end()) {
 
-        if ((*it)->m_bIndestructible)
+        const auto WORKSPACERULE = g_pConfigManager->getWorkspaceRuleFor(it->get());
+        if (WORKSPACERULE.isPersistent) {
+            ++it;
             continue;
+        }
 
         const auto WINDOWSONWORKSPACE = getWindowsOnWorkspace((*it)->m_iID);
 
@@ -1479,6 +1482,9 @@ CWindow* CCompositor::getWindowInDirection(CWindow* pWindow, char dir) {
         if (w.get() == pWindow || !w->m_bIsMapped || w->isHidden() || w->m_bIsFloating || !isWorkspaceVisible(w->m_iWorkspaceID))
             continue;
 
+        if (pWindow->m_iMonitorID == w->m_iMonitorID && pWindow->m_iWorkspaceID != w->m_iWorkspaceID)
+            continue;
+
         const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(w->m_iWorkspaceID);
         if (PWORKSPACE->m_bHasFullscreenWindow && !w->m_bIsFullscreen && !w->m_bCreatedOverFullscreen)
             continue;
@@ -1614,7 +1620,7 @@ CWorkspace* CCompositor::getWorkspaceByName(const std::string& name) {
 }
 
 CWorkspace* CCompositor::getWorkspaceByString(const std::string& str) {
-    if (str.find("name:") == 0) {
+    if (str.starts_with("name:")) {
         return getWorkspaceByName(str.substr(str.find_first_of(':') + 1));
     }
 
@@ -1741,10 +1747,10 @@ void CCompositor::updateWindowAnimatedDecorationValues(CWindow* pWindow) {
     static auto* const INACTIVECOL            = (CGradientValueData*)g_pConfigManager->getConfigValuePtr("general:col.inactive_border")->data.get();
     static auto* const NOGROUPACTIVECOL       = (CGradientValueData*)g_pConfigManager->getConfigValuePtr("general:col.nogroup_border_active")->data.get();
     static auto* const NOGROUPINACTIVECOL     = (CGradientValueData*)g_pConfigManager->getConfigValuePtr("general:col.nogroup_border")->data.get();
-    static auto* const GROUPACTIVECOL         = (CGradientValueData*)g_pConfigManager->getConfigValuePtr("general:col.group_border_active")->data.get();
-    static auto* const GROUPINACTIVECOL       = (CGradientValueData*)g_pConfigManager->getConfigValuePtr("general:col.group_border")->data.get();
-    static auto* const GROUPACTIVELOCKEDCOL   = (CGradientValueData*)g_pConfigManager->getConfigValuePtr("general:col.group_border_locked_active")->data.get();
-    static auto* const GROUPINACTIVELOCKEDCOL = (CGradientValueData*)g_pConfigManager->getConfigValuePtr("general:col.group_border_locked")->data.get();
+    static auto* const GROUPACTIVECOL         = (CGradientValueData*)g_pConfigManager->getConfigValuePtr("group:col.border_active")->data.get();
+    static auto* const GROUPINACTIVECOL       = (CGradientValueData*)g_pConfigManager->getConfigValuePtr("group:col.border_inactive")->data.get();
+    static auto* const GROUPACTIVELOCKEDCOL   = (CGradientValueData*)g_pConfigManager->getConfigValuePtr("group:col.border_locked_active")->data.get();
+    static auto* const GROUPINACTIVELOCKEDCOL = (CGradientValueData*)g_pConfigManager->getConfigValuePtr("group:col.border_locked_inactive")->data.get();
     static auto* const PINACTIVEALPHA         = &g_pConfigManager->getConfigValuePtr("decoration:inactive_opacity")->floatValue;
     static auto* const PACTIVEALPHA           = &g_pConfigManager->getConfigValuePtr("decoration:active_opacity")->floatValue;
     static auto* const PFULLSCREENALPHA       = &g_pConfigManager->getConfigValuePtr("decoration:fullscreen_opacity")->floatValue;
@@ -1973,14 +1979,14 @@ CMonitor* CCompositor::getMonitorFromString(const std::string& name) {
             Debug::log(ERR, "Error in getMonitorFromString: invalid arg 1");
             return nullptr;
         }
-    } else if (name.find("desc:") == 0) {
+    } else if (name.starts_with("desc:")) {
         const auto DESCRIPTION = name.substr(5);
 
         for (auto& m : m_vMonitors) {
             if (!m->output)
                 continue;
 
-            if (m->output->description && std::string(m->output->description).find(DESCRIPTION) == 0) {
+            if (m->output->description && std::string(m->output->description).starts_with(DESCRIPTION)) {
                 return m.get();
             }
         }
@@ -2242,13 +2248,13 @@ CWindow* CCompositor::getWindowByRegex(const std::string& regexp) {
 
     std::regex       regexCheck(regexp);
     std::string      matchCheck;
-    if (regexp.find("title:") == 0) {
+    if (regexp.starts_with("title:")) {
         mode       = MODE_TITLE_REGEX;
         regexCheck = std::regex(regexp.substr(6));
-    } else if (regexp.find("address:") == 0) {
+    } else if (regexp.starts_with("address:")) {
         mode       = MODE_ADDRESS;
         matchCheck = regexp.substr(8);
-    } else if (regexp.find("pid:") == 0) {
+    } else if (regexp.starts_with("pid:")) {
         mode       = MODE_PID;
         matchCheck = regexp.substr(4);
     }

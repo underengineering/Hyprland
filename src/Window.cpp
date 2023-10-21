@@ -424,6 +424,7 @@ void CWindow::onUnmap() {
 void CWindow::onMap() {
 
     m_pWLSurface.assign(g_pXWaylandManager->getWindowSurface(this));
+    m_pWLSurface.m_pOwner = this;
 
     // JIC, reset the callbacks. If any are set, we'll make sure they are cleared so we don't accidentally unset them. (In case a window got remapped)
     m_vRealPosition.resetAllCallbacks();
@@ -453,6 +454,8 @@ void CWindow::onMap() {
 
     hyprListener_unmapWindow.initCallback(m_bIsX11 ? &m_uSurface.xwayland->surface->events.unmap : &m_uSurface.xdg->surface->events.unmap, &Events::listener_unmapWindow, this,
                                           "CWindow");
+
+    m_vReportedSize = m_vPendingReportedSize;
 }
 
 void CWindow::onBorderAngleAnimEnd(void* ptr) {
@@ -499,15 +502,15 @@ void CWindow::applyDynamicRule(const SWindowRule& r) {
             m_sAdditionalConfigData.forceOpaque = true;
     } else if (r.szRule == "immediate") {
         m_sAdditionalConfigData.forceTearing = true;
-    } else if (r.szRule.find("rounding") == 0) {
+    } else if (r.szRule.starts_with("rounding")) {
         try {
             m_sAdditionalConfigData.rounding = std::stoi(r.szRule.substr(r.szRule.find_first_of(' ') + 1));
         } catch (std::exception& e) { Debug::log(ERR, "Rounding rule \"{}\" failed with: {}", r.szRule, e.what()); }
-    } else if (r.szRule.find("bordersize") == 0) {
+    } else if (r.szRule.starts_with("bordersize")) {
         try {
             m_sAdditionalConfigData.borderSize = std::stoi(r.szRule.substr(r.szRule.find_first_of(' ') + 1));
         } catch (std::exception& e) { Debug::log(ERR, "Bordersize rule \"{}\" failed with: {}", r.szRule, e.what()); }
-    } else if (r.szRule.find("opacity") == 0) {
+    } else if (r.szRule.starts_with("opacity")) {
         try {
             CVarList vars(r.szRule, 0, ' ');
 
@@ -540,10 +543,10 @@ void CWindow::applyDynamicRule(const SWindowRule& r) {
         } catch (std::exception& e) { Debug::log(ERR, "Opacity rule \"{}\" failed with: {}", r.szRule, e.what()); }
     } else if (r.szRule == "noanim") {
         m_sAdditionalConfigData.forceNoAnims = true;
-    } else if (r.szRule.find("animation") == 0) {
+    } else if (r.szRule.starts_with("animation")) {
         auto STYLE                             = r.szRule.substr(r.szRule.find_first_of(' ') + 1);
         m_sAdditionalConfigData.animationStyle = STYLE;
-    } else if (r.szRule.find("bordercolor") == 0) {
+    } else if (r.szRule.starts_with("bordercolor")) {
         try {
             std::string colorPart = removeBeginEndSpacesTabs(r.szRule.substr(r.szRule.find_first_of(' ') + 1));
 
@@ -559,7 +562,7 @@ void CWindow::applyDynamicRule(const SWindowRule& r) {
         m_sAdditionalConfigData.dimAround = true;
     } else if (r.szRule == "keepaspectratio") {
         m_sAdditionalConfigData.keepAspectRatio = true;
-    } else if (r.szRule.find("xray") == 0) {
+    } else if (r.szRule.starts_with("xray")) {
         CVarList vars(r.szRule, 0, ' ');
 
         try {
@@ -881,6 +884,9 @@ bool CWindow::opaque() {
         return false;
 
     const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(m_iWorkspaceID);
+
+    if (m_pWLSurface.small() && !m_pWLSurface.m_bFillIgnoreSmall)
+        return false;
 
     if (PWORKSPACE->m_fAlpha.fl() != 1.f)
         return false;

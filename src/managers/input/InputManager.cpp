@@ -41,8 +41,6 @@ void CInputManager::simulateMouseMovement() {
     clock_gettime(CLOCK_MONOTONIC, &now);
     m_vLastCursorPosFloored = m_vLastCursorPosFloored - Vector2D(1, 1); // hack: force the mouseMoveUnified to report without making this a refocus.
     mouseMoveUnified(now.tv_sec * 1000 + now.tv_nsec / 10000000);
-
-    m_tmrLastCursorMovement.reset();
 }
 
 void CInputManager::sendMotionEventsToFocused() {
@@ -99,10 +97,10 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
     if (MOUSECOORDSFLOORED == m_vLastCursorPosFloored && !refocus)
         return;
 
+    EMIT_HOOK_EVENT_CANCELLABLE("mouseMove", MOUSECOORDSFLOORED);
+
     if (time)
         g_pCompositor->notifyIdleActivity();
-
-    EMIT_HOOK_EVENT("mouseMove", MOUSECOORDSFLOORED);
 
     m_vLastCursorPosFloored = MOUSECOORDSFLOORED;
 
@@ -424,9 +422,9 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
 }
 
 void CInputManager::onMouseButton(wlr_pointer_button_event* e) {
-    g_pCompositor->notifyIdleActivity();
+    EMIT_HOOK_EVENT_CANCELLABLE("mouseButton", e);
 
-    EMIT_HOOK_EVENT("mouseButton", e);
+    g_pCompositor->notifyIdleActivity();
 
     m_tmrLastCursorMovement.reset();
 
@@ -621,7 +619,7 @@ void CInputManager::processMouseDownKill(wlr_pointer_button_event* e) {
 
 void CInputManager::onMouseWheel(wlr_pointer_axis_event* e) {
     static auto* const PSCROLLFACTOR      = &g_pConfigManager->getConfigValuePtr("input:touchpad:scroll_factor")->floatValue;
-    static auto* const PGROUPBARSCROLLING = &g_pConfigManager->getConfigValuePtr("misc:groupbar_scrolling")->intValue;
+    static auto* const PGROUPBARSCROLLING = &g_pConfigManager->getConfigValuePtr("group:groupbar:scrolling")->intValue;
 
     auto               factor = (*PSCROLLFACTOR <= 0.f || e->source != WLR_AXIS_SOURCE_FINGER ? 1.f : *PSCROLLFACTOR);
 
@@ -1001,7 +999,7 @@ void CInputManager::setPointerConfigs() {
                 libinput_device_config_accel_set_profile(LIBINPUTDEV, LIBINPUT_CONFIG_ACCEL_PROFILE_ADAPTIVE);
             } else if (ACCELPROFILE == "flat") {
                 libinput_device_config_accel_set_profile(LIBINPUTDEV, LIBINPUT_CONFIG_ACCEL_PROFILE_FLAT);
-            } else if (ACCELPROFILE.find("custom") == 0) {
+            } else if (ACCELPROFILE.starts_with("custom")) {
                 CVarList args = {ACCELPROFILE, 0, ' '};
                 try {
                     double              step = std::stod(args[1]);

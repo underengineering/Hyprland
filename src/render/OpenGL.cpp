@@ -37,7 +37,7 @@ CHyprOpenGLImpl::CHyprOpenGLImpl() {
     Debug::log(WARN, "!RENDERER: Using the legacy GLES2 renderer!");
 #endif
 
-    g_pHookSystem->hookDynamic("preRender", [&](void* self, std::any data) { preRender(std::any_cast<CMonitor*>(data)); });
+    g_pHookSystem->hookDynamic("preRender", [&](void* self, SCallbackInfo& info, std::any data) { preRender(std::any_cast<CMonitor*>(data)); });
 
     RASSERT(eglMakeCurrent(wlr_egl_get_display(g_pCompositor->m_sWLREGL), EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT), "Couldn't unset current EGL!");
 
@@ -122,16 +122,18 @@ void CHyprOpenGLImpl::begin(CMonitor* pMonitor, CRegion* pDamage, bool fake) {
     m_iWLROutputFb = m_iCurrentOutputFb;
 
     // ensure a framebuffer for the monitor exists
-    if (m_mMonitorRenderResources.find(pMonitor) == m_mMonitorRenderResources.end() || m_RenderData.pCurrentMonData->primaryFB.m_vSize != pMonitor->vecPixelSize) {
+    if (!m_mMonitorRenderResources.contains(pMonitor) || m_RenderData.pCurrentMonData->primaryFB.m_vSize != pMonitor->vecPixelSize) {
         m_RenderData.pCurrentMonData->stencilTex.allocate();
 
         m_RenderData.pCurrentMonData->primaryFB.m_pStencilTex    = &m_RenderData.pCurrentMonData->stencilTex;
         m_RenderData.pCurrentMonData->mirrorFB.m_pStencilTex     = &m_RenderData.pCurrentMonData->stencilTex;
         m_RenderData.pCurrentMonData->mirrorSwapFB.m_pStencilTex = &m_RenderData.pCurrentMonData->stencilTex;
+        m_RenderData.pCurrentMonData->offMainFB.m_pStencilTex    = &m_RenderData.pCurrentMonData->stencilTex;
 
         m_RenderData.pCurrentMonData->primaryFB.alloc(pMonitor->vecPixelSize.x, pMonitor->vecPixelSize.y);
         m_RenderData.pCurrentMonData->mirrorFB.alloc(pMonitor->vecPixelSize.x, pMonitor->vecPixelSize.y);
         m_RenderData.pCurrentMonData->mirrorSwapFB.alloc(pMonitor->vecPixelSize.x, pMonitor->vecPixelSize.y);
+        m_RenderData.pCurrentMonData->offMainFB.alloc(pMonitor->vecPixelSize.x, pMonitor->vecPixelSize.y);
 
         createBGTextureForMonitor(pMonitor);
     }
@@ -148,6 +150,8 @@ void CHyprOpenGLImpl::begin(CMonitor* pMonitor, CRegion* pDamage, bool fake) {
     m_RenderData.damage.set(*pDamage);
 
     m_bFakeFrame = fake;
+
+    m_RenderData.currentFB = &m_RenderData.pCurrentMonData->primaryFB;
 
     if (m_bReloadScreenShader) {
         m_bReloadScreenShader = false;
@@ -349,6 +353,7 @@ void CHyprOpenGLImpl::initShaders() {
     m_RenderData.pCurrentMonData->m_shBORDER1.fullSize              = glGetUniformLocation(prog, "fullSize");
     m_RenderData.pCurrentMonData->m_shBORDER1.fullSizeUntransformed = glGetUniformLocation(prog, "fullSizeUntransformed");
     m_RenderData.pCurrentMonData->m_shBORDER1.radius                = glGetUniformLocation(prog, "radius");
+    m_RenderData.pCurrentMonData->m_shBORDER1.radiusOuter           = glGetUniformLocation(prog, "radiusOuter");
     m_RenderData.pCurrentMonData->m_shBORDER1.gradient              = glGetUniformLocation(prog, "gradient");
     m_RenderData.pCurrentMonData->m_shBORDER1.gradientLength        = glGetUniformLocation(prog, "gradientLength");
     m_RenderData.pCurrentMonData->m_shBORDER1.angle                 = glGetUniformLocation(prog, "angle");
@@ -1293,7 +1298,7 @@ void pushVert2D(float x, float y, float* arr, int& counter, wlr_box* box) {
     counter++;
 }
 
-void CHyprOpenGLImpl::renderBorder(wlr_box* box, const CGradientValueData& grad, int round, int borderSize, float a) {
+void CHyprOpenGLImpl::renderBorder(wlr_box* box, const CGradientValueData& grad, int round, int borderSize, float a, int outerRound) {
     RASSERT((box->width > 0 && box->height > 0), "Tried to render rect with width/height < 0!");
     RASSERT(m_RenderData.pMonitor, "Tried to render rect without begin()!");
 
@@ -1359,6 +1364,7 @@ void CHyprOpenGLImpl::renderBorder(wlr_box* box, const CGradientValueData& grad,
     glUniform2f(m_RenderData.pCurrentMonData->m_shBORDER1.fullSize, (float)FULLSIZE.x, (float)FULLSIZE.y);
     glUniform2f(m_RenderData.pCurrentMonData->m_shBORDER1.fullSizeUntransformed, (float)box->width, (float)box->height);
     glUniform1f(m_RenderData.pCurrentMonData->m_shBORDER1.radius, round);
+    glUniform1f(m_RenderData.pCurrentMonData->m_shBORDER1.radiusOuter, outerRound == -1 ? round : outerRound);
     glUniform1f(m_RenderData.pCurrentMonData->m_shBORDER1.thick, scaledBorderSize);
 
     glVertexAttribPointer(m_RenderData.pCurrentMonData->m_shBORDER1.posAttrib, 2, GL_FLOAT, GL_FALSE, 0, fullVerts);
@@ -1762,34 +1768,37 @@ void CHyprOpenGLImpl::renderSplash(cairo_t* const CAIRO, cairo_surface_t* const 
 void CHyprOpenGLImpl::createBGTextureForMonitor(CMonitor* pMonitor) {
     RASSERT(m_RenderData.pMonitor, "Tried to createBGTex without begin()!");
 
-    static auto* const              PNOSPLASH        = &g_pConfigManager->getConfigValuePtr("misc:disable_splash_rendering")->intValue;
-    static auto* const              PDISABLEHYPRCHAN = &g_pConfigManager->getConfigValuePtr("misc:disable_hypr_chan")->intValue;
-    static auto* const              PFORCEHYPRCHAN   = &g_pConfigManager->getConfigValuePtr("misc:force_hypr_chan")->intValue;
+    static auto* const PNOSPLASH       = &g_pConfigManager->getConfigValuePtr("misc:disable_splash_rendering")->intValue;
+    static auto* const PFORCEHYPRCHAN  = &g_pConfigManager->getConfigValuePtr("misc:force_hypr_chan")->intValue;
+    static auto* const PFORCEWALLPAPER = &g_pConfigManager->getConfigValuePtr("misc:force_default_wallpaper")->intValue;
 
-    std::random_device              dev;
-    std::mt19937                    engine(dev());
-    std::uniform_int_distribution<> distribution(0, 2);
-    std::uniform_int_distribution<> distribution2(0, 1);
-
-    const bool                      USEANIME = *PFORCEHYPRCHAN || distribution(engine) == 0; // 66% for anime
+    const auto         FORCEWALLPAPER = std::clamp(*PFORCEWALLPAPER, static_cast<int64_t>(-1L), static_cast<int64_t>(2L));
 
     // release the last tex if exists
     const auto PTEX = &m_mMonitorBGTextures[pMonitor];
     PTEX->destroyTexture();
 
     PTEX->allocate();
-
     Debug::log(LOG, "Allocated texture for BGTex");
 
     // TODO: use relative paths to the installation
     // or configure the paths at build time
+    std::string texPath    = "/usr/share/hyprland/wall_";
+    std::string prefixes[] = {"", "anime_", "anime2_"};
 
     // get the adequate tex
-    std::string texPath = "/usr/share/hyprland/wall_";
-    if (!*PDISABLEHYPRCHAN)
-        texPath += std::string(USEANIME ? (distribution2(engine) == 0 ? "anime_" : "anime2_") : "");
+    if (FORCEWALLPAPER == -1) {
+        std::random_device              dev;
+        std::mt19937                    engine(dev());
+        std::uniform_int_distribution<> distribution(0, 2);
+        std::uniform_int_distribution<> distribution_anime(1, 2);
 
-    // check if wallpapers exist
+        if (PFORCEHYPRCHAN)
+            texPath += prefixes[distribution_anime(engine)];
+        else
+            texPath += prefixes[distribution(engine)];
+    } else
+        texPath += prefixes[FORCEWALLPAPER];
 
     Vector2D textureSize;
     if (pMonitor->vecTransformedSize.x > 3850) {
@@ -1803,6 +1812,7 @@ void CHyprOpenGLImpl::createBGTextureForMonitor(CMonitor* pMonitor) {
         texPath += "2K.png";
     }
 
+    // check if wallpapers exist
     if (!std::filesystem::exists(texPath)) {
         // try local
         texPath = texPath.substr(0, 5) + "local/" + texPath.substr(5);
@@ -1886,6 +1896,7 @@ void CHyprOpenGLImpl::destroyMonitorResources(CMonitor* pMonitor) {
     g_pHyprOpenGL->m_mMonitorRenderResources[pMonitor].mirrorSwapFB.release();
     g_pHyprOpenGL->m_mMonitorRenderResources[pMonitor].monitorMirrorFB.release();
     g_pHyprOpenGL->m_mMonitorRenderResources[pMonitor].blurFB.release();
+    g_pHyprOpenGL->m_mMonitorRenderResources[pMonitor].offMainFB.release();
     g_pHyprOpenGL->m_mMonitorRenderResources[pMonitor].stencilTex.destroyTexture();
     g_pHyprOpenGL->m_mMonitorBGTextures[pMonitor].destroyTexture();
     g_pHyprOpenGL->m_mMonitorRenderResources.erase(pMonitor);
@@ -1907,4 +1918,20 @@ void CHyprOpenGLImpl::setMatrixScaleTranslate(const Vector2D& translate, const f
 
 void CHyprOpenGLImpl::restoreMatrix() {
     memcpy(m_RenderData.projection, m_RenderData.savedProjection, 9 * sizeof(float));
+}
+
+void CHyprOpenGLImpl::bindOffMain() {
+    m_RenderData.pCurrentMonData->offMainFB.bind();
+    clear(CColor(0, 0, 0, 0));
+    m_RenderData.currentFB = &m_RenderData.pCurrentMonData->offMainFB;
+}
+
+void CHyprOpenGLImpl::renderOffToMain(CFramebuffer* off) {
+    wlr_box monbox = {0, 0, m_RenderData.pMonitor->vecTransformedSize.x, m_RenderData.pMonitor->vecTransformedSize.y};
+    renderTexturePrimitive(off->m_cTex, &monbox);
+}
+
+void CHyprOpenGLImpl::bindBackOnMain() {
+    m_RenderData.pCurrentMonData->primaryFB.bind();
+    m_RenderData.currentFB = &m_RenderData.pCurrentMonData->primaryFB;
 }

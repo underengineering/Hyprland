@@ -13,6 +13,7 @@
 #include "Shader.hpp"
 #include "Texture.hpp"
 #include "Framebuffer.hpp"
+#include "Transformer.hpp"
 
 #include "../debug/TracyDefines.hpp"
 
@@ -41,6 +42,7 @@ struct SMonitorRenderData {
     CFramebuffer primaryFB;
     CFramebuffer mirrorFB;     // these are used for some effects,
     CFramebuffer mirrorSwapFB; // etc
+    CFramebuffer offMainFB;
 
     CFramebuffer monitorMirrorFB; // used for mirroring outputs
 
@@ -75,6 +77,7 @@ struct SCurrentRenderData {
     float               savedProjection[9];
 
     SMonitorRenderData* pCurrentMonData = nullptr;
+    CFramebuffer*       currentFB       = nullptr;
 
     CRegion             damage;
 
@@ -109,7 +112,7 @@ class CHyprOpenGLImpl {
     void               renderTexture(const CTexture&, wlr_box*, float a, int round = 0, bool discardActive = false, bool allowCustomUV = false);
     void               renderTextureWithBlur(const CTexture&, wlr_box*, float a, wlr_surface* pSurface, int round = 0, bool blockBlurOptimization = false, float blurA = 1.f);
     void               renderRoundedShadow(wlr_box*, int round, int range, float a = 1.0);
-    void               renderBorder(wlr_box*, const CGradientValueData&, int round, int borderSize, float a = 1.0);
+    void               renderBorder(wlr_box*, const CGradientValueData&, int round, int borderSize, float a = 1.0, int outerRound = -1 /* use round */);
 
     void               saveMatrix();
     void               setMatrixScaleTranslate(const Vector2D& translate, const float& scale);
@@ -141,6 +144,10 @@ class CHyprOpenGLImpl {
     void               renderMirrored();
 
     void               applyScreenShader(const std::string& path);
+
+    void               bindOffMain();
+    void               renderOffToMain(CFramebuffer* off);
+    void               bindBackOnMain();
 
     SCurrentRenderData m_RenderData;
 
