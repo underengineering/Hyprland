@@ -325,7 +325,8 @@ void CWindow::updateSurfaceOutputs() {
         m_pWLSurface.wlr(),
         [](wlr_surface* surf, int x, int y, void* data) {
             const auto PMONITOR = g_pCompositor->getMonitorFromID(((CWindow*)data)->m_iMonitorID);
-            g_pProtocolManager->m_pFractionalScaleProtocolManager->setPreferredScaleForSurface(surf, PMONITOR ? PMONITOR->scale : 1.f);
+            g_pCompositor->setPreferredScaleForSurface(surf, PMONITOR ? PMONITOR->scale : 1.f);
+            g_pCompositor->setPreferredTransformForSurface(surf, PMONITOR->transform);
         },
         this);
 }
@@ -333,6 +334,10 @@ void CWindow::updateSurfaceOutputs() {
 void CWindow::moveToWorkspace(int workspaceID) {
     if (m_iWorkspaceID == workspaceID)
         return;
+
+    static auto* const PCLOSEONLASTSPECIAL = &g_pConfigManager->getConfigValuePtr("misc:close_special_on_empty")->intValue;
+
+    const int          OLDWORKSPACE = m_iWorkspaceID;
 
     m_iWorkspaceID = workspaceID;
 
@@ -352,6 +357,15 @@ void CWindow::moveToWorkspace(int workspaceID) {
 
     // update xwayland coords
     g_pXWaylandManager->setWindowSize(this, m_vRealSize.vec());
+
+    if (g_pCompositor->isWorkspaceSpecial(OLDWORKSPACE) && g_pCompositor->getWindowsOnWorkspace(OLDWORKSPACE) == 0 && *PCLOSEONLASTSPECIAL) {
+        const auto PWS = g_pCompositor->getWorkspaceByID(OLDWORKSPACE);
+
+        if (PWS) {
+            if (const auto PMONITOR = g_pCompositor->getMonitorFromID(PWS->m_iMonitorID); PMONITOR)
+                PMONITOR->setSpecialWorkspace(nullptr);
+        }
+    }
 }
 
 CWindow* CWindow::X11TransientFor() {
@@ -502,6 +516,8 @@ void CWindow::applyDynamicRule(const SWindowRule& r) {
             m_sAdditionalConfigData.forceOpaque = true;
     } else if (r.szRule == "immediate") {
         m_sAdditionalConfigData.forceTearing = true;
+    } else if (r.szRule == "nearestneighbor") {
+        m_sAdditionalConfigData.nearestNeighbor = true;
     } else if (r.szRule.starts_with("rounding")) {
         try {
             m_sAdditionalConfigData.rounding = std::stoi(r.szRule.substr(r.szRule.find_first_of(' ') + 1));
@@ -591,6 +607,7 @@ void CWindow::updateDynamicRules() {
     m_sAdditionalConfigData.keepAspectRatio = false;
     m_sAdditionalConfigData.xray            = -1;
     m_sAdditionalConfigData.forceTearing    = false;
+    m_sAdditionalConfigData.nearestNeighbor = false;
 
     const auto WINDOWRULES = g_pConfigManager->getMatchingRules(this);
     for (auto& r : WINDOWRULES) {

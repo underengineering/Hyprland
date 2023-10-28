@@ -65,7 +65,6 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
     static auto* const PMOUSEREFOCUS     = &g_pConfigManager->getConfigValuePtr("input:mouse_refocus")->intValue;
     static auto* const PMOUSEDPMS        = &g_pConfigManager->getConfigValuePtr("misc:mouse_move_enables_dpms")->intValue;
     static auto* const PFOLLOWONDND      = &g_pConfigManager->getConfigValuePtr("misc:always_follow_on_dnd")->intValue;
-    static auto* const PHOGFOCUS         = &g_pConfigManager->getConfigValuePtr("misc:layers_hog_keyboard_focus")->intValue;
     static auto* const PFLOATBEHAVIOR    = &g_pConfigManager->getConfigValuePtr("input:float_switch_override_focus")->intValue;
     static auto* const PMOUSEFOCUSMON    = &g_pConfigManager->getConfigValuePtr("misc:mouse_move_focuses_monitor")->intValue;
     static auto* const PRESIZEONBORDER   = &g_pConfigManager->getConfigValuePtr("general:resize_on_border")->intValue;
@@ -183,7 +182,7 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
     // update stuff
     updateDragIcon();
 
-    if (!m_sDrag.drag && !m_lCurrentlyHeldButtons.empty() && g_pCompositor->m_pLastFocus) {
+    if (!m_sDrag.drag && !m_lCurrentlyHeldButtons.empty() && g_pCompositor->m_pLastFocus && m_pLastMouseSurface) {
         if (m_bLastFocusOnLS) {
             foundSurface       = m_pLastMouseSurface;
             pFoundLayerSurface = g_pCompositor->getLayerSurfaceFromSurface(foundSurface);
@@ -311,6 +310,7 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
         }
 
         wlr_seat_pointer_clear_focus(g_pCompositor->m_sSeat.seat);
+        m_pLastMouseSurface = nullptr;
 
         if (refocus || !g_pCompositor->m_pLastWindow) // if we are forcing a refocus, and we don't find a surface, clear the kb focus too!
             g_pCompositor->focusWindow(nullptr);
@@ -335,12 +335,11 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
 
     bool allowKeyboardRefocus = true;
 
-    if (*PHOGFOCUS && !refocus && g_pCompositor->m_pLastFocus) {
+    if (!refocus && g_pCompositor->m_pLastFocus) {
         const auto PLS = g_pCompositor->getLayerSurfaceFromSurface(g_pCompositor->m_pLastFocus);
 
-        if (PLS && PLS->layerSurface->current.keyboard_interactive) {
+        if (PLS && PLS->layerSurface->current.keyboard_interactive == ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE)
             allowKeyboardRefocus = false;
-        }
     }
 
     // set the values for use
@@ -380,11 +379,8 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
             }
 
             if (pFoundWindow == g_pCompositor->m_pLastWindow) {
-                if (foundSurface != g_pCompositor->m_pLastFocus || m_bLastFocusOnLS) {
-                    //      ^^^ changed the subsurface                  ^^^ came back from a LS
-                    m_pLastMouseSurface = foundSurface;
-                    wlr_seat_pointer_notify_enter(g_pCompositor->m_sSeat.seat, foundSurface, surfaceLocal.x, surfaceLocal.y);
-                }
+                m_pLastMouseSurface = foundSurface;
+                wlr_seat_pointer_notify_enter(g_pCompositor->m_sSeat.seat, foundSurface, surfaceLocal.x, surfaceLocal.y);
             }
 
             if (FOLLOWMOUSE != 0 || pFoundWindow == g_pCompositor->m_pLastWindow)
@@ -407,7 +403,8 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
         }
 
         if (pFoundLayerSurface &&
-            (pFoundLayerSurface->layerSurface->current.keyboard_interactive || (pFoundLayerSurface->layer >= ZWLR_LAYER_SHELL_V1_LAYER_TOP && !g_pCompositor->m_pLastWindow)) &&
+            (pFoundLayerSurface->layerSurface->current.keyboard_interactive != ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE ||
+             (pFoundLayerSurface->layer >= ZWLR_LAYER_SHELL_V1_LAYER_TOP && !g_pCompositor->m_pLastWindow)) &&
             FOLLOWMOUSE != 3 && allowKeyboardRefocus) {
             g_pCompositor->focusSurface(foundSurface);
         }
@@ -1203,7 +1200,7 @@ void CInputManager::constrainMouse(SMouse* pMouse, wlr_pointer_constraint_v1* co
                                     g_pXWaylandManager->xwaylandToWaylandCoords({PWINDOW->m_uSurface.xwayland->x, PWINDOW->m_uSurface.xwayland->y})) :
             PWINDOW->m_vRealPosition.goalv();
 
-        PCONSTRAINT->cursorPosOnActivate = MOUSECOORDS - RELATIVETO;
+        PCONSTRAINT->cursorPosOnActivate = (MOUSECOORDS - RELATIVETO) * PWINDOW->m_fX11SurfaceScaledBy;
     }
 
     if (constraint->current.committed & WLR_POINTER_CONSTRAINT_V1_STATE_CURSOR_HINT) {

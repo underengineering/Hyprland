@@ -2,6 +2,7 @@
 #include "../managers/KeybindManager.hpp"
 
 #include <string.h>
+#include <string>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -934,7 +935,7 @@ bool windowRuleValid(const std::string& RULE) {
         RULE == "nomaximizerequest" || RULE == "fakefullscreen" || RULE == "nomaxsize" || RULE == "pin" || RULE == "noanim" || RULE == "dimaround" || RULE == "windowdance" ||
         RULE == "maximize" || RULE == "keepaspectratio" || RULE.starts_with("animation") || RULE.starts_with("rounding") || RULE.starts_with("workspace") ||
         RULE.starts_with("bordercolor") || RULE == "forcergbx" || RULE == "noinitialfocus" || RULE == "stayfocused" || RULE.starts_with("bordersize") || RULE.starts_with("xray") ||
-        RULE.starts_with("center") || RULE.starts_with("group") || RULE == "immediate";
+        RULE.starts_with("center") || RULE.starts_with("group") || RULE == "immediate" || RULE == "nearestneighbor";
 }
 
 bool layerRuleValid(const std::string& RULE) {
@@ -1176,7 +1177,10 @@ void CConfigManager::handleWorkspaceRules(const std::string& command, const std:
         rules                  = value.substr(WORKSPACE_DELIM + 1);
     }
 
-    auto assignRule = [&](std::string rule) {
+    const static std::string ruleOnCreatedEmtpy    = "on-created-empty:";
+    const static int         ruleOnCreatedEmtpyLen = ruleOnCreatedEmtpy.length();
+
+    auto                     assignRule = [&](std::string rule) {
         size_t delim = std::string::npos;
         if ((delim = rule.find("gapsin:")) != std::string::npos)
             wsRule.gapsIn = std::stoi(rule.substr(delim + 7));
@@ -1198,6 +1202,8 @@ void CConfigManager::handleWorkspaceRules(const std::string& command, const std:
             wsRule.isDefault = configStringToInt(rule.substr(delim + 8));
         else if ((delim = rule.find("persistent:")) != std::string::npos)
             wsRule.isPersistent = configStringToInt(rule.substr(delim + 11));
+        else if ((delim = rule.find(ruleOnCreatedEmtpy)) != std::string::npos)
+            wsRule.onCreatedEmptyRunCmd = cleanCmdForWorkspace(name, rule.substr(delim + ruleOnCreatedEmtpyLen));
     };
 
     size_t      pos = 0;

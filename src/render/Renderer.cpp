@@ -31,17 +31,18 @@ void renderSurface(struct wlr_surface* surface, int x, int y, void* data) {
 
         if (PSURFACE && !PSURFACE->m_bFillIgnoreSmall && PSURFACE->small() /* guarantees m_pOwner */) {
             const auto CORRECT                     = PSURFACE->correctSmallVec();
+            const auto SIZE                        = PSURFACE->getViewporterCorrectedSize();
             const auto INTERACTIVERESIZEINPROGRESS = g_pInputManager->currentlyDraggedWindow == PSURFACE->m_pOwner && g_pInputManager->dragMode == MBIND_RESIZE;
 
             if (!INTERACTIVERESIZEINPROGRESS) {
                 windowBox.x += CORRECT.x;
                 windowBox.y += CORRECT.y;
 
-                windowBox.width  = (double)surface->current.buffer_width * (PSURFACE->m_pOwner->m_vRealSize.vec().x / PSURFACE->m_pOwner->m_vReportedSize.x);
-                windowBox.height = (double)surface->current.buffer_height * (PSURFACE->m_pOwner->m_vRealSize.vec().y / PSURFACE->m_pOwner->m_vReportedSize.y);
+                windowBox.width  = SIZE.x * (PSURFACE->m_pOwner->m_vRealSize.vec().x / PSURFACE->m_pOwner->m_vReportedSize.x);
+                windowBox.height = SIZE.y * (PSURFACE->m_pOwner->m_vRealSize.vec().y / PSURFACE->m_pOwner->m_vReportedSize.y);
             } else {
-                windowBox.width  = (double)surface->current.buffer_width;
-                windowBox.height = (double)surface->current.buffer_height;
+                windowBox.width  = SIZE.x;
+                windowBox.height = SIZE.y;
             }
         }
 
@@ -427,8 +428,15 @@ void CHyprRenderer::renderWindow(CWindow* pWindow, CMonitor* pMonitor, timespec*
                 wd->draw(pMonitor, renderdata.alpha * renderdata.fadeAlpha, Vector2D{renderdata.x, renderdata.y} - PREOFFSETPOS);
 
         static auto* const PXWLUSENN = &g_pConfigManager->getConfigValuePtr("xwayland:use_nearest_neighbor")->intValue;
-        if (pWindow->m_bIsX11 && *PXWLUSENN)
+        if ((pWindow->m_bIsX11 && *PXWLUSENN) || pWindow->m_sAdditionalConfigData.nearestNeighbor.toUnderlying())
             g_pHyprOpenGL->m_RenderData.useNearestNeighbor = true;
+
+        if (pWindow->m_pWLSurface.small() && !pWindow->m_pWLSurface.m_bFillIgnoreSmall && renderdata.blur) {
+            wlr_box wb = {renderdata.x, renderdata.y, renderdata.w, renderdata.h};
+            scaleBox(&wb, pMonitor->scale);
+            g_pHyprOpenGL->renderRectWithBlur(&wb, CColor(0, 0, 0, 0), renderdata.dontRound ? 0 : renderdata.rounding - 1);
+            renderdata.blur = false;
+        }
 
         wlr_surface_for_each_surface(pWindow->m_pWLSurface.wlr(), renderSurface, &renderdata);
 
@@ -483,7 +491,13 @@ void CHyprRenderer::renderWindow(CWindow* pWindow, CMonitor* pMonitor, timespec*
             renderdata.dontRound       = true; // don't round popups
             renderdata.pMonitor        = pMonitor;
             renderdata.squishOversized = false; // don't squish popups
+
+            if (pWindow->m_sAdditionalConfigData.nearestNeighbor.toUnderlying())
+                g_pHyprOpenGL->m_RenderData.useNearestNeighbor = true;
+
             wlr_xdg_surface_for_each_popup_surface(pWindow->m_uSurface.xdg, renderSurface, &renderdata);
+
+            g_pHyprOpenGL->m_RenderData.useNearestNeighbor = false;
         }
     }
 

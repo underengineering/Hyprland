@@ -468,7 +468,7 @@ void Events::listener_mapWindow(void* owner, void* data) {
     const auto PLSFROMFOCUS = g_pCompositor->getLayerSurfaceFromSurface(g_pCompositor->m_pLastFocus);
     if (PLSFROMFOCUS && PLSFROMFOCUS->layerSurface->current.keyboard_interactive)
         PWINDOW->m_bNoInitialFocus = true;
-    if (PWORKSPACE->m_bHasFullscreenWindow && !requestsFullscreen) {
+    if (PWORKSPACE->m_bHasFullscreenWindow && !requestsFullscreen && !PWINDOW->m_bIsFloating) {
         if (*PNEWTAKESOVERFS == 0)
             PWINDOW->m_bNoInitialFocus = true;
         else if (*PNEWTAKESOVERFS == 2)
@@ -646,7 +646,8 @@ void Events::listener_mapWindow(void* owner, void* data) {
     if (PWORKSPACE->m_bHasFullscreenWindow && !PWINDOW->m_bIsFullscreen && !PWINDOW->m_bIsFloating)
         PWINDOW->m_fAlpha.setValueAndWarp(0.f);
 
-    g_pProtocolManager->m_pFractionalScaleProtocolManager->setPreferredScaleForSurface(PWINDOW->m_pWLSurface.wlr(), PMONITOR->scale);
+    g_pCompositor->setPreferredScaleForSurface(PWINDOW->m_pWLSurface.wlr(), PMONITOR->scale);
+    g_pCompositor->setPreferredTransformForSurface(PWINDOW->m_pWLSurface.wlr(), PMONITOR->transform);
 }
 
 void Events::listener_unmapWindow(void* owner, void* data) {

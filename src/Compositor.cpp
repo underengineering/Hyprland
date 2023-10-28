@@ -121,7 +121,6 @@ void CCompositor::initServer() {
     signal(SIGSEGV, handleUnrecoverableSignal);
     signal(SIGABRT, handleUnrecoverableSignal);
     signal(SIGUSR1, handleUserSignal);
-    //wl_event_loop_add_signal(m_sWLEventLoop, SIGINT, handleCritSignal, nullptr);
 
     initManagers(STAGE_PRIORITY);
 
@@ -215,7 +214,6 @@ void CCompositor::initServer() {
 
     m_sWLRPresentation = wlr_presentation_create(m_sWLDisplay, m_sWLRBackend);
 
-    m_sWLRIdle         = wlr_idle_create(m_sWLDisplay);
     m_sWLRIdleNotifier = wlr_idle_notifier_v1_create(m_sWLDisplay);
 
     m_sWLRLayerShell = wlr_layer_shell_v1_create(m_sWLDisplay, 4);
@@ -885,6 +883,8 @@ CMonitor* CCompositor::getMonitorFromOutput(wlr_output* out) {
 
 void CCompositor::focusWindow(CWindow* pWindow, wlr_surface* pSurface) {
 
+    static auto* const PFOLLOWMOUSE = &g_pConfigManager->getConfigValuePtr("input:follow_mouse")->intValue;
+
     if (g_pCompositor->m_sSeat.exclusiveClient) {
         Debug::log(LOG, "Disallowing setting focus to a window due to there being an active input inhibitor layer.");
         return;
@@ -1008,6 +1008,9 @@ void CCompositor::focusWindow(CWindow* pWindow, wlr_surface* pSurface) {
     } else {
         std::rotate(m_vWindowFocusHistory.begin(), HISTORYPIVOT, HISTORYPIVOT + 1);
     }
+
+    if (*PFOLLOWMOUSE == 0)
+        g_pInputManager->sendMotionEventsToFocused();
 }
 
 void CCompositor::focusSurface(wlr_surface* pSurface, CWindow* pWindowOwner) {
@@ -1194,24 +1197,33 @@ void CCompositor::sanityCheckWorkspaces() {
             continue;
         }
 
-        const auto WINDOWSONWORKSPACE = getWindowsOnWorkspace((*it)->m_iID);
+        const auto& WORKSPACE          = *it;
+        const auto  WINDOWSONWORKSPACE = getWindowsOnWorkspace(WORKSPACE->m_iID);
 
-        if ((WINDOWSONWORKSPACE == 0 && !isWorkspaceVisible((*it)->m_iID))) {
+        if (WINDOWSONWORKSPACE == 0) {
+            if (!isWorkspaceVisible(WORKSPACE->m_iID)) {
 
-            if ((*it)->m_bIsSpecialWorkspace) {
-                if ((*it)->m_fAlpha.fl() > 0.f /* don't abruptly end the fadeout */) {
-                    ++it;
-                    continue;
+                if (WORKSPACE->m_bIsSpecialWorkspace) {
+                    if (WORKSPACE->m_fAlpha.fl() > 0.f /* don't abruptly end the fadeout */) {
+                        ++it;
+                        continue;
+                    }
+
+                    const auto PMONITOR = getMonitorFromID(WORKSPACE->m_iMonitorID);
+
+                    if (PMONITOR && PMONITOR->specialWorkspaceID == WORKSPACE->m_iID)
+                        PMONITOR->setSpecialWorkspace(nullptr);
                 }
 
-                const auto PMONITOR = getMonitorFromID((*it)->m_iMonitorID);
-
-                if (PMONITOR && PMONITOR->specialWorkspaceID == (*it)->m_iID)
-                    PMONITOR->setSpecialWorkspace(nullptr);
+                it = m_vWorkspaces.erase(it);
+                continue;
             }
+            if (!WORKSPACE->m_bOnCreatedEmptyExecuted) {
+                if (auto cmd = WORKSPACERULE.onCreatedEmptyRunCmd)
+                    g_pKeybindManager->spawn(*cmd);
 
-            it = m_vWorkspaces.erase(it);
-            continue;
+                WORKSPACE->m_bOnCreatedEmptyExecuted = true;
+            }
         }
 
         ++it;
@@ -2161,7 +2173,7 @@ void CCompositor::updateFullscreenFadeOnWorkspace(CWorkspace* pWorkspace) {
 }
 
 void CCompositor::setWindowFullscreen(CWindow* pWindow, bool on, eFullscreenMode mode) {
-    if (!windowValidMapped(pWindow))
+    if (!windowValidMapped(pWindow) || g_pCompositor->m_bUnsafeState)
         return;
 
     if (pWindow->m_bPinned) {
@@ -2571,12 +2583,10 @@ CWindow* CCompositor::getForceFocus() {
 }
 
 void CCompositor::notifyIdleActivity() {
-    wlr_idle_notify_activity(g_pCompositor->m_sWLRIdle, g_pCompositor->m_sSeat.seat);
     wlr_idle_notifier_v1_notify_activity(g_pCompositor->m_sWLRIdleNotifier, g_pCompositor->m_sSeat.seat);
 }
 
 void CCompositor::setIdleActivityInhibit(bool enabled) {
-    wlr_idle_set_enabled(g_pCompositor->m_sWLRIdle, g_pCompositor->m_sSeat.seat, enabled);
     wlr_idle_notifier_v1_set_inhibited(g_pCompositor->m_sWLRIdleNotifier, !enabled);
 }
 void CCompositor::arrangeMonitors() {
@@ -2676,4 +2686,13 @@ void CCompositor::leaveUnsafeState() {
         wlr_output_destroy(m_pUnsafeOutput);
 
     m_pUnsafeOutput = nullptr;
+}
+
+void CCompositor::setPreferredScaleForSurface(wlr_surface* pSurface, double scale) {
+    g_pProtocolManager->m_pFractionalScaleProtocolManager->setPreferredScaleForSurface(pSurface, scale);
+    wlr_surface_set_preferred_buffer_scale(pSurface, scale);
+}
+
+void CCompositor::setPreferredTransformForSurface(wlr_surface* pSurface, wl_output_transform transform) {
+    wlr_surface_set_preferred_buffer_transform(pSurface, transform);
 }

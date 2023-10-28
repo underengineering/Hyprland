@@ -54,7 +54,6 @@ class CCompositor {
     wlr_drm_lease_v1_manager*                  m_sWRLDRMLeaseMgr;
     wlr_xdg_activation_v1*                     m_sWLRXDGActivation;
     wlr_output_layout*                         m_sWLROutputLayout;
-    wlr_idle*                                  m_sWLRIdle;
     wlr_idle_notifier_v1*                      m_sWLRIdleNotifier;
     wlr_layer_shell_v1*                        m_sWLRLayerShell;
     wlr_xdg_shell*                             m_sWLRXDGShell;
@@ -207,6 +206,8 @@ class CCompositor {
     void           arrangeMonitors();
     void           enterUnsafeState();
     void           leaveUnsafeState();
+    void           setPreferredScaleForSurface(wlr_surface* pSurface, double scale);
+    void           setPreferredTransformForSurface(wlr_surface* pSurface, wl_output_transform transform);
 
     std::string    explicitConfigPath;
 
