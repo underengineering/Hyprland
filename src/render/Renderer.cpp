@@ -76,7 +76,8 @@ void renderSurface(struct wlr_surface* surface, int x, int y, void* data) {
     if (RDATA->dontRound)
         rounding = 0;
 
-    const bool CANDISABLEBLEND = RDATA->alpha >= 1.f && rounding == 0 && surface->opaque;
+    const bool WINDOWOPAQUE    = RDATA->pWindow && RDATA->pWindow->m_pWLSurface.wlr() == surface ? RDATA->pWindow->opaque() : false;
+    const bool CANDISABLEBLEND = RDATA->alpha * RDATA->fadeAlpha >= 1.f && rounding == 0 && (WINDOWOPAQUE || surface->opaque);
 
     if (CANDISABLEBLEND)
         g_pHyprOpenGL->blend(false);
@@ -1940,10 +1941,22 @@ bool CHyprRenderer::applyMonitorRule(CMonitor* pMonitor, SMonitorRule* pMonitorR
 void CHyprRenderer::setCursorSurface(wlr_surface* surf, int hotspotX, int hotspotY) {
     m_bCursorHasSurface = surf;
 
+    if (surf == m_sLastCursorData.surf)
+        return;
+
+    m_sLastCursorData.name = "";
+    m_sLastCursorData.surf = surf;
+
     wlr_cursor_set_surface(g_pCompositor->m_sWLRCursor, surf, hotspotX, hotspotY);
 }
 void CHyprRenderer::setCursorFromName(const std::string& name) {
     m_bCursorHasSurface = true;
+
+    if (name == m_sLastCursorData.name)
+        return;
+
+    m_sLastCursorData.name = name;
+    m_sLastCursorData.surf.reset();
 
     wlr_cursor_set_xcursor(g_pCompositor->m_sWLRCursor, g_pCompositor->m_sWLRXCursorMgr, name.c_str());
 }
