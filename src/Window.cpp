@@ -55,12 +55,12 @@ SWindowDecorationExtents CWindow::getFullWindowExtents() {
     }
 
     if (m_pWLSurface.exists() && !m_bIsX11) {
-        wlr_box surfaceExtents = {0, 0, 0, 0};
+        CBox surfaceExtents = {0, 0, 0, 0};
         // TODO: this could be better, perhaps make a getFullWindowRegion?
         wlr_xdg_surface_for_each_popup_surface(
             m_uSurface.xdg,
             [](wlr_surface* surf, int sx, int sy, void* data) {
-                wlr_box* pSurfaceExtents = (wlr_box*)data;
+                CBox* pSurfaceExtents = (CBox*)data;
                 if (sx < pSurfaceExtents->x)
                     pSurfaceExtents->x = sx;
                 if (sy < pSurfaceExtents->y)
@@ -88,21 +88,21 @@ SWindowDecorationExtents CWindow::getFullWindowExtents() {
     return maxExtents;
 }
 
-wlr_box CWindow::getFullWindowBoundingBox() {
+CBox CWindow::getFullWindowBoundingBox() {
     if (m_sAdditionalConfigData.dimAround) {
         const auto PMONITOR = g_pCompositor->getMonitorFromID(m_iMonitorID);
         return {PMONITOR->vecPosition.x, PMONITOR->vecPosition.y, PMONITOR->vecSize.x, PMONITOR->vecSize.y};
     }
 
-    auto    maxExtents = getFullWindowExtents();
+    auto maxExtents = getFullWindowExtents();
 
-    wlr_box finalBox = {m_vRealPosition.vec().x - maxExtents.topLeft.x, m_vRealPosition.vec().y - maxExtents.topLeft.y,
-                        m_vRealSize.vec().x + maxExtents.topLeft.x + maxExtents.bottomRight.x, m_vRealSize.vec().y + maxExtents.topLeft.y + maxExtents.bottomRight.y};
+    CBox finalBox = {m_vRealPosition.vec().x - maxExtents.topLeft.x, m_vRealPosition.vec().y - maxExtents.topLeft.y,
+                     m_vRealSize.vec().x + maxExtents.topLeft.x + maxExtents.bottomRight.x, m_vRealSize.vec().y + maxExtents.topLeft.y + maxExtents.bottomRight.y};
 
     return finalBox;
 }
 
-wlr_box CWindow::getWindowIdealBoundingBoxIgnoreReserved() {
+CBox CWindow::getWindowIdealBoundingBoxIgnoreReserved() {
 
     const auto PMONITOR = g_pCompositor->getMonitorFromID(m_iMonitorID);
 
@@ -113,7 +113,7 @@ wlr_box CWindow::getWindowIdealBoundingBoxIgnoreReserved() {
         POS  = PMONITOR->vecPosition;
         SIZE = PMONITOR->vecSize;
 
-        return wlr_box{(int)POS.x, (int)POS.y, (int)SIZE.x, (int)SIZE.y};
+        return CBox{(int)POS.x, (int)POS.y, (int)SIZE.x, (int)SIZE.y};
     }
 
     if (DELTALESSTHAN(POS.y - PMONITOR->vecPosition.y, PMONITOR->vecReservedTopLeft.y, 1)) {
@@ -131,10 +131,10 @@ wlr_box CWindow::getWindowIdealBoundingBoxIgnoreReserved() {
         SIZE.y += PMONITOR->vecReservedBottomRight.y;
     }
 
-    return wlr_box{(int)POS.x, (int)POS.y, (int)SIZE.x, (int)SIZE.y};
+    return CBox{(int)POS.x, (int)POS.y, (int)SIZE.x, (int)SIZE.y};
 }
 
-wlr_box CWindow::getWindowInputBox() {
+CBox CWindow::getWindowInputBox() {
     const int BORDERSIZE = getRealBorderSize();
 
     if (m_sAdditionalConfigData.dimAround) {
@@ -146,7 +146,7 @@ wlr_box CWindow::getWindowInputBox() {
 
     for (auto& wd : m_dWindowDecorations) {
 
-        if (!wd->allowsInput())
+        if (!(wd->getDecorationFlags() & DECORATION_ALLOWS_MOUSE_INPUT))
             continue;
 
         const auto EXTENTS = wd->getWindowDecorationExtents();
@@ -165,13 +165,13 @@ wlr_box CWindow::getWindowInputBox() {
     }
 
     // Add extents to the real base BB and return
-    wlr_box finalBox = {m_vRealPosition.vec().x - maxExtents.topLeft.x, m_vRealPosition.vec().y - maxExtents.topLeft.y,
-                        m_vRealSize.vec().x + maxExtents.topLeft.x + maxExtents.bottomRight.x, m_vRealSize.vec().y + maxExtents.topLeft.y + maxExtents.bottomRight.y};
+    CBox finalBox = {m_vRealPosition.vec().x - maxExtents.topLeft.x, m_vRealPosition.vec().y - maxExtents.topLeft.y,
+                     m_vRealSize.vec().x + maxExtents.topLeft.x + maxExtents.bottomRight.x, m_vRealSize.vec().y + maxExtents.topLeft.y + maxExtents.bottomRight.y};
 
     return finalBox;
 }
 
-wlr_box CWindow::getWindowMainSurfaceBox() {
+CBox CWindow::getWindowMainSurfaceBox() {
     return {m_vRealPosition.vec().x, m_vRealPosition.vec().y, m_vRealSize.vec().x, m_vRealSize.vec().y};
 }
 
@@ -223,6 +223,9 @@ pid_t CWindow::getPID() {
 
         wl_client_get_credentials(wl_resource_get_client(m_uSurface.xdg->resource), &PID, nullptr, nullptr);
     } else {
+        if (!m_bIsMapped || !m_bMappedX11)
+            return -1;
+
         PID = m_uSurface.xwayland->pid;
     }
 
@@ -654,9 +657,9 @@ bool CWindow::isInCurvedCorner(double x, double y) {
 void findExtensionForVector2D(wlr_surface* surface, int x, int y, void* data) {
     const auto DATA = (SExtensionFindingData*)data;
 
-    wlr_box    box = {DATA->origin.x + x, DATA->origin.y + y, surface->current.width, surface->current.height};
+    CBox       box = {DATA->origin.x + x, DATA->origin.y + y, surface->current.width, surface->current.height};
 
-    if (wlr_box_contains_point(&box, DATA->vec.x, DATA->vec.y))
+    if (box.containsPoint(DATA->vec))
         *DATA->found = surface;
 }
 
@@ -765,6 +768,15 @@ int CWindow::getGroupSize() {
         size++;
     }
     return size;
+}
+
+bool CWindow::canBeGroupedInto(CWindow* pWindow) {
+    return !g_pKeybindManager->m_bGroupsLocked                                          // global group lock disengaged
+        && ((m_eGroupRules & GROUP_INVADE && m_bFirstMap)                               // window ignore local group locks, or
+            || (!pWindow->getGroupHead()->m_sGroupData.locked                           //      target unlocked
+                && !(m_sGroupData.pNextWindow && getGroupHead()->m_sGroupData.locked))) //      source unlocked or isn't group
+        && !m_sGroupData.deny                                                           // source is not denied entry
+        && !(m_eGroupRules & GROUP_BARRED && m_bFirstMap);                              // group rule doesn't prevent adding window
 }
 
 CWindow* CWindow::getGroupWindowByIndex(int index) {

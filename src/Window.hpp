@@ -336,11 +336,11 @@ class CWindow {
     }
 
     // methods
-    wlr_box                  getFullWindowBoundingBox();
+    CBox                     getFullWindowBoundingBox();
     SWindowDecorationExtents getFullWindowExtents();
-    wlr_box                  getWindowInputBox();
-    wlr_box                  getWindowMainSurfaceBox();
-    wlr_box                  getWindowIdealBoundingBoxIgnoreReserved();
+    CBox                     getWindowInputBox();
+    CBox                     getWindowMainSurfaceBox();
+    CBox                     getWindowIdealBoundingBoxIgnoreReserved();
     void                     updateWindowDecos();
     pid_t                    getPID();
     IHyprWindowDecoration*   getDecorationByType(eDecorationType);
@@ -379,6 +379,7 @@ class CWindow {
     CWindow*                 getGroupPrevious();
     CWindow*                 getGroupWindowByIndex(int);
     int                      getGroupSize();
+    bool                     canBeGroupedInto(CWindow* pWindow);
     void                     setGroupCurrent(CWindow* pWindow);
     void                     insertWindowToGroup(CWindow* pWindow);
     void                     updateGroupOutputs();

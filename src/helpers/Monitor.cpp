@@ -109,20 +109,20 @@ void CMonitor::onConnect(bool noRule) {
         m_bRenderingInitPassed = true;
     }
 
-    if (!m_pThisWrap) {
+    std::shared_ptr<CMonitor>* thisWrapper = nullptr;
 
-        // find the wrap
-        for (auto& m : g_pCompositor->m_vRealMonitors) {
-            if (m->ID == ID) {
-                m_pThisWrap = &m;
-                break;
-            }
+    // find the wrap
+    for (auto& m : g_pCompositor->m_vRealMonitors) {
+        if (m->ID == ID) {
+            thisWrapper = &m;
+            break;
         }
     }
 
-    if (std::find_if(g_pCompositor->m_vMonitors.begin(), g_pCompositor->m_vMonitors.end(), [&](auto& other) { return other.get() == this; }) == g_pCompositor->m_vMonitors.end()) {
-        g_pCompositor->m_vMonitors.push_back(*m_pThisWrap);
-    }
+    RASSERT(thisWrapper->get(), "CMonitor::onConnect: Had no wrapper???");
+
+    if (std::find_if(g_pCompositor->m_vMonitors.begin(), g_pCompositor->m_vMonitors.end(), [&](auto& other) { return other.get() == this; }) == g_pCompositor->m_vMonitors.end())
+        g_pCompositor->m_vMonitors.push_back(*thisWrapper);
 
     m_bEnabled = true;
 
@@ -131,6 +131,8 @@ void CMonitor::onConnect(bool noRule) {
     // set mode, also applies
     if (!noRule)
         g_pHyprRenderer->applyMonitorRule(this, &monitorRule, true);
+
+    wlr_output_commit(output);
 
     wlr_damage_ring_set_bounds(&damage, vecTransformedSize.x, vecTransformedSize.y);
 
@@ -151,8 +153,6 @@ void CMonitor::onConnect(bool noRule) {
     scale = monitorRule.scale;
     if (scale < 0.1)
         scale = getDefaultScale();
-
-    m_pThisWrap = nullptr;
 
     forceFullFrames = 3; // force 3 full frames to make sure there is no blinking due to double-buffering.
     //
@@ -184,6 +184,8 @@ void CMonitor::onConnect(bool noRule) {
         g_pCompositor->setActiveMonitor(this);
 
     renderTimer = wl_event_loop_add_timer(g_pCompositor->m_sWLEventLoop, ratHandler, this);
+
+    g_pCompositor->scheduleFrameForMonitor(this);
 }
 
 void CMonitor::onDisconnect() {
@@ -221,9 +223,6 @@ void CMonitor::onDisconnect() {
         g_pConfigManager->m_bWantsMonitorReload = true;
     }
 
-    m_bEnabled             = false;
-    m_bRenderingInitPassed = false;
-
     hyprListener_monitorFrame.removeCallback();
     hyprListener_monitorDamage.removeCallback();
     hyprListener_monitorNeedsFrame.removeCallback();
@@ -248,6 +247,9 @@ void CMonitor::onDisconnect() {
         g_pCompositor->enterUnsafeState();
     }
 
+    m_bEnabled             = false;
+    m_bRenderingInitPassed = false;
+
     if (BACKUPMON) {
         // snap cursor
         wlr_cursor_warp(g_pCompositor->m_sWLRCursor, nullptr, BACKUPMON->vecPosition.x + BACKUPMON->vecTransformedSize.x / 2.f,
@@ -256,7 +258,7 @@ void CMonitor::onDisconnect() {
         // move workspaces
         std::deque<CWorkspace*> wspToMove;
         for (auto& w : g_pCompositor->m_vWorkspaces) {
-            if (w->m_iMonitorID == ID) {
+            if (w->m_iMonitorID == ID || !g_pCompositor->getMonitorFromID(w->m_iMonitorID)) {
                 wspToMove.push_back(w.get());
             }
         }
@@ -315,14 +317,14 @@ void CMonitor::addDamage(const CRegion* rg) {
     addDamage(const_cast<CRegion*>(rg)->pixman());
 }
 
-void CMonitor::addDamage(const wlr_box* box) {
+void CMonitor::addDamage(const CBox* box) {
     static auto* const PZOOMFACTOR = &g_pConfigManager->getConfigValuePtr("misc:cursor_zoom_factor")->floatValue;
     if (*PZOOMFACTOR != 1.f && g_pCompositor->getMonitorFromCursor() == this) {
         wlr_damage_ring_add_whole(&damage);
         g_pCompositor->scheduleFrameForMonitor(this);
     }
 
-    if (wlr_damage_ring_add_box(&damage, box))
+    if (wlr_damage_ring_add_box(&damage, const_cast<CBox*>(box)->pWlr()))
         g_pCompositor->scheduleFrameForMonitor(this);
 }
 
@@ -414,19 +416,22 @@ void CMonitor::setMirror(const std::string& mirrorOf) {
         vecPosition = RULE.offset;
 
         // push to mvmonitors
-        if (!m_pThisWrap) {
-            // find the wrap
-            for (auto& m : g_pCompositor->m_vRealMonitors) {
-                if (m->ID == ID) {
-                    m_pThisWrap = &m;
-                    break;
-                }
+
+        std::shared_ptr<CMonitor>* thisWrapper = nullptr;
+
+        // find the wrap
+        for (auto& m : g_pCompositor->m_vRealMonitors) {
+            if (m->ID == ID) {
+                thisWrapper = &m;
+                break;
             }
         }
 
+        RASSERT(thisWrapper->get(), "CMonitor::setMirror: Had no wrapper???");
+
         if (std::find_if(g_pCompositor->m_vMonitors.begin(), g_pCompositor->m_vMonitors.end(), [&](auto& other) { return other.get() == this; }) ==
             g_pCompositor->m_vMonitors.end()) {
-            g_pCompositor->m_vMonitors.push_back(*m_pThisWrap);
+            g_pCompositor->m_vMonitors.push_back(*thisWrapper);
         }
 
         setupDefaultWS(RULE);

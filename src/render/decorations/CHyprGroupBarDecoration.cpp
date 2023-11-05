@@ -76,8 +76,8 @@ void CHyprGroupBarDecoration::updateWindow(CWindow* pWindow) {
 }
 
 void CHyprGroupBarDecoration::damageEntire() {
-    wlr_box dm = {m_vLastWindowPos.x - m_seExtents.topLeft.x, m_vLastWindowPos.y - m_seExtents.topLeft.y, m_vLastWindowSize.x + m_seExtents.topLeft.x + m_seExtents.bottomRight.x,
-                  m_seExtents.topLeft.y};
+    CBox dm = {m_vLastWindowPos.x - m_seExtents.topLeft.x, m_vLastWindowPos.y - m_seExtents.topLeft.y, m_vLastWindowSize.x + m_seExtents.topLeft.x + m_seExtents.bottomRight.x,
+               m_seExtents.topLeft.y};
     g_pHyprRenderer->damageBox(&dm);
 }
 
@@ -99,13 +99,13 @@ void CHyprGroupBarDecoration::draw(CMonitor* pMonitor, float a, const Vector2D& 
     int xoff = 0;
 
     for (int i = 0; i < barsToDraw; ++i) {
-        wlr_box rect = {m_vLastWindowPos.x + xoff - pMonitor->vecPosition.x + offset.x,
-                        m_vLastWindowPos.y - BAR_PADDING_OUTER_VERT - BORDERSIZE - BAR_INDICATOR_HEIGHT - pMonitor->vecPosition.y + offset.y, m_fBarWidth, BAR_INDICATOR_HEIGHT};
+        CBox rect = {m_vLastWindowPos.x + xoff - pMonitor->vecPosition.x + offset.x,
+                     m_vLastWindowPos.y - BAR_PADDING_OUTER_VERT - BORDERSIZE - BAR_INDICATOR_HEIGHT - pMonitor->vecPosition.y + offset.y, m_fBarWidth, BAR_INDICATOR_HEIGHT};
 
         if (rect.width <= 0 || rect.height <= 0)
             break;
 
-        scaleBox(&rect, pMonitor->scale);
+        rect.scale(pMonitor->scale);
 
         static auto* const PGROUPCOLACTIVE         = &g_pConfigManager->getConfigValuePtr("group:groupbar:col.active")->data;
         static auto* const PGROUPCOLINACTIVE       = &g_pConfigManager->getConfigValuePtr("group:groupbar:col.inactive")->data;
@@ -301,31 +301,54 @@ void CHyprGroupBarDecoration::refreshGradients() {
     renderGradientTo(m_tGradientInactive, ((CGradientValueData*)PCOLINACTIVE->get())->m_vColors[0]);
 }
 
-bool CHyprGroupBarDecoration::allowsInput() {
-    return true;
-}
-
 bool CHyprGroupBarDecoration::onEndWindowDragOnDeco(CWindow* pDraggedWindow, const Vector2D& pos) {
 
-    if (!(!g_pKeybindManager->m_bGroupsLocked                                                                             // global group lock disengaged
-          && ((pDraggedWindow->m_eGroupRules & GROUP_INVADE && pDraggedWindow->m_bFirstMap)                               // window ignore local group locks, or
-              || (!m_pWindow->getGroupHead()->m_sGroupData.locked                                                         //    target unlocked
-                  && !(pDraggedWindow->m_sGroupData.pNextWindow && pDraggedWindow->getGroupHead()->m_sGroupData.locked))) //    source unlocked or isn't group
-          && !pDraggedWindow->m_sGroupData.deny                                                                           // source is not denied entry
-          && !(pDraggedWindow->m_eGroupRules & GROUP_BARRED && pDraggedWindow->m_bFirstMap)))                             // group rule doesn't prevent adding window
+    if (!pDraggedWindow->canBeGroupedInto(m_pWindow))
         return true;
 
     const float BARRELATIVEX = pos.x - m_vLastWindowPos.x - m_fBarWidth / 2;
     const int   WINDOWINDEX  = BARRELATIVEX < 0 ? -1 : (BARRELATIVEX) / (m_fBarWidth + BAR_HORIZONTAL_PADDING);
 
     CWindow*    pWindowInsertAfter = m_pWindow->getGroupWindowByIndex(WINDOWINDEX);
+    CWindow*    pWindowInsertEnd   = pWindowInsertAfter->m_sGroupData.pNextWindow;
+    CWindow*    pDraggedHead       = pDraggedWindow->m_sGroupData.pNextWindow ? pDraggedWindow->getGroupHead() : pDraggedWindow;
 
-    g_pLayoutManager->getCurrentLayout()->onWindowRemoved(pDraggedWindow);
+    if (pDraggedWindow->m_sGroupData.pNextWindow) {
+
+        // stores group data
+        std::vector<CWindow*> members;
+        CWindow*              curr      = pDraggedHead;
+        const bool            WASLOCKED = pDraggedHead->m_sGroupData.locked;
+        do {
+            members.push_back(curr);
+            curr = curr->m_sGroupData.pNextWindow;
+        } while (curr != members[0]);
+
+        // removes all windows
+        for (CWindow* w : members) {
+            w->m_sGroupData.pNextWindow = nullptr;
+            w->m_sGroupData.head        = false;
+            w->m_sGroupData.locked      = false;
+            g_pLayoutManager->getCurrentLayout()->onWindowRemoved(w);
+        }
+
+        // restores the group
+        for (auto it = members.begin(); it != members.end(); ++it) {
+            if (std::next(it) != members.end())
+                (*it)->m_sGroupData.pNextWindow = *std::next(it);
+            else
+                (*it)->m_sGroupData.pNextWindow = members[0];
+        }
+        members[0]->m_sGroupData.head   = true;
+        members[0]->m_sGroupData.locked = WASLOCKED;
+    } else {
+        g_pLayoutManager->getCurrentLayout()->onWindowRemoved(pDraggedWindow);
+    }
 
     pWindowInsertAfter->insertWindowToGroup(pDraggedWindow);
 
     if (WINDOWINDEX == -1)
-        std::swap(pDraggedWindow->m_sGroupData.head, pDraggedWindow->m_sGroupData.pNextWindow->m_sGroupData.head);
+        std::swap(pDraggedHead->m_sGroupData.head, pWindowInsertEnd->m_sGroupData.head);
 
     m_pWindow->setGroupCurrent(pDraggedWindow);
     pDraggedWindow->applyGroupRules();
@@ -379,4 +402,12 @@ void CHyprGroupBarDecoration::onBeginWindowDragOnDeco(const Vector2D& pos) {
 
     if (!g_pCompositor->isWindowActive(pWindow))
         g_pCompositor->focusWindow(pWindow);
+}
+
+eDecorationLayer CHyprGroupBarDecoration::getDecorationLayer() {
+    return DECORATION_LAYER_OVER;
+}
+
+uint64_t CHyprGroupBarDecoration::getDecorationFlags() {
+    return DECORATION_ALLOWS_MOUSE_INPUT;
 }

@@ -16,7 +16,6 @@ struct SCallstackFrameInfo {
 std::string                      absolutePath(const std::string&, const std::string&);
 void                             addWLSignal(wl_signal*, wl_listener*, void* pOwner, const std::string& ownerString);
 std::string                      escapeJSONStrings(const std::string& str);
-void                             scaleBox(wlr_box*, float);
 std::string                      removeBeginEndSpacesTabs(std::string);
 bool                             isNumber(const std::string&, bool allowfloat = false);
 bool                             isDirection(const std::string&);
@@ -33,6 +32,7 @@ double                           normalizeAngleRad(double ang);
 std::string                      replaceInString(std::string subject, const std::string& search, const std::string& replace);
 std::vector<SCallstackFrameInfo> getBacktrace();
 void                             throwError(const std::string& err);
+uint32_t                         drmFormatToGL(uint32_t drm);
 
 template <typename... Args>
 [[deprecated("use std::format instead")]] std::string getFormat(std::format_string<Args...> fmt, Args&&... args) {

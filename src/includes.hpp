@@ -145,3 +145,5 @@ extern "C" {
 #endif
 
 #include "helpers/Vector2D.hpp"
+#include "helpers/Box.hpp"
+#include "SharedDefs.hpp"

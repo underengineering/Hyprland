@@ -243,13 +243,14 @@ void CConfigManager::setDefaultVars() {
     configValues["input:tablet:region_position"].vecValue           = Vector2D();
     configValues["input:tablet:region_size"].vecValue               = Vector2D();
 
-    configValues["binds:pass_mouse_when_bound"].intValue    = 0;
-    configValues["binds:scroll_event_delay"].intValue       = 300;
-    configValues["binds:workspace_back_and_forth"].intValue = 0;
-    configValues["binds:allow_workspace_cycles"].intValue   = 0;
-    configValues["binds:workspace_center_on"].intValue      = 1;
-    configValues["binds:focus_preferred_method"].intValue   = 0;
-    configValues["binds:ignore_group_lock"].intValue        = 0;
+    configValues["binds:pass_mouse_when_bound"].intValue       = 0;
+    configValues["binds:scroll_event_delay"].intValue          = 300;
+    configValues["binds:workspace_back_and_forth"].intValue    = 0;
+    configValues["binds:allow_workspace_cycles"].intValue      = 0;
+    configValues["binds:workspace_center_on"].intValue         = 1;
+    configValues["binds:focus_preferred_method"].intValue      = 0;
+    configValues["binds:ignore_group_lock"].intValue           = 0;
+    configValues["binds:movefocus_cycles_fullscreen"].intValue = 1;
 
     configValues["gestures:workspace_swipe"].intValue                          = 0;
     configValues["gestures:workspace_swipe_fingers"].intValue                  = 3;
@@ -2066,7 +2067,7 @@ void CConfigManager::performMonitorReload() {
     bool overAgain = false;
 
     for (auto& m : g_pCompositor->m_vRealMonitors) {
-        if (!m->output)
+        if (!m->output || m->isUnsafeFallback)
             continue;
 
         auto rule = getMonitorRuleFor(m->szName, m->output->description ? m->output->description : "");
@@ -2147,15 +2148,13 @@ bool CConfigManager::shouldBlurLS(const std::string& ns) {
 
 void CConfigManager::ensureMonitorStatus() {
     for (auto& rm : g_pCompositor->m_vRealMonitors) {
-        if (!rm->output)
+        if (!rm->output || rm->isUnsafeFallback)
             continue;
 
         auto rule = getMonitorRuleFor(rm->szName, rm->output->description ? rm->output->description : "");
 
-        if (rule.disabled == rm->m_bEnabled) {
-            rm->m_pThisWrap = &rm;
+        if (rule.disabled == rm->m_bEnabled)
             g_pHyprRenderer->applyMonitorRule(rm.get(), &rule);
-        }
     }
 }
 
