@@ -97,12 +97,15 @@ int main(int argc, char** argv) {
 
     g_pCompositor->initServer();
 
-    Init::gainRealTime();
+    if (!getenv("HYPRLAND_NO_RT") || configStringToInt(std::string(getenv("HYPRLAND_NO_RT"))) == 0)
+        Init::gainRealTime();
 
     Debug::log(LOG, "Hyprland init finished.");
 
     // If all's good to go, start.
     g_pCompositor->startCompositor();
+
+    g_pCompositor->m_bIsShuttingDown = true;
 
     // If we are here it means we got yote.
     Debug::log(LOG, "Hyprland reached the end.");

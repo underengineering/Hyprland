@@ -79,6 +79,7 @@ void CConfigManager::setDefaultVars() {
     configValues["general:no_border_on_floating"].intValue = 0;
     configValues["general:gaps_in"].intValue               = 5;
     configValues["general:gaps_out"].intValue              = 20;
+    configValues["general:gaps_workspaces"].intValue        = 0;
     ((CGradientValueData*)configValues["general:col.active_border"].data.get())->reset(0xffffffff);
     ((CGradientValueData*)configValues["general:col.inactive_border"].data.get())->reset(0xff444444);
     ((CGradientValueData*)configValues["general:col.nogroup_border"].data.get())->reset(0xff444444);
@@ -129,6 +130,7 @@ void CConfigManager::setDefaultVars() {
     configValues["group:insert_after_current"].intValue = 1;
     configValues["group:focus_removed_window"].intValue = 1;
 
+    configValues["group:groupbar:font_family"].strValue   = "Sans";
     configValues["group:groupbar:font_size"].intValue     = 8;
     configValues["group:groupbar:gradients"].intValue     = 1;
     configValues["group:groupbar:render_titles"].intValue = 1;
@@ -144,7 +146,7 @@ void CConfigManager::setDefaultVars() {
     configValues["debug:log_damage"].intValue         = 0;
     configValues["debug:overlay"].intValue            = 0;
     configValues["debug:damage_blink"].intValue       = 0;
-    configValues["debug:disable_logs"].intValue       = 0;
+    configValues["debug:disable_logs"].intValue       = 1;
     configValues["debug:disable_time"].intValue       = 1;
     configValues["debug:enable_stdout_logs"].intValue = 0;
     configValues["debug:damage_tracking"].intValue    = DAMAGE_TRACKING_FULL;
@@ -152,34 +154,36 @@ void CConfigManager::setDefaultVars() {
     configValues["debug:suppress_errors"].intValue    = 0;
     configValues["debug:watchdog_timeout"].intValue   = 5;
 
-    configValues["decoration:rounding"].intValue               = 0;
-    configValues["decoration:blur:enabled"].intValue           = 1;
-    configValues["decoration:blur:size"].intValue              = 8;
-    configValues["decoration:blur:passes"].intValue            = 1;
-    configValues["decoration:blur:ignore_opacity"].intValue    = 0;
-    configValues["decoration:blur:new_optimizations"].intValue = 1;
-    configValues["decoration:blur:xray"].intValue              = 0;
-    configValues["decoration:blur:noise"].floatValue           = 0.0117;
-    configValues["decoration:blur:contrast"].floatValue        = 0.8916;
-    configValues["decoration:blur:brightness"].floatValue      = 0.8172;
-    configValues["decoration:blur:special"].intValue           = 0;
-    configValues["decoration:active_opacity"].floatValue       = 1;
-    configValues["decoration:inactive_opacity"].floatValue     = 1;
-    configValues["decoration:fullscreen_opacity"].floatValue   = 1;
-    configValues["decoration:no_blur_on_oversized"].intValue   = 0;
-    configValues["decoration:drop_shadow"].intValue            = 1;
-    configValues["decoration:shadow_range"].intValue           = 4;
-    configValues["decoration:shadow_render_power"].intValue    = 3;
-    configValues["decoration:shadow_ignore_window"].intValue   = 1;
-    configValues["decoration:shadow_offset"].vecValue          = Vector2D();
-    configValues["decoration:shadow_scale"].floatValue         = 1.f;
-    configValues["decoration:col.shadow"].intValue             = 0xee1a1a1a;
-    configValues["decoration:col.shadow_inactive"].intValue    = INT_MAX;
-    configValues["decoration:dim_inactive"].intValue           = 0;
-    configValues["decoration:dim_strength"].floatValue         = 0.5f;
-    configValues["decoration:dim_special"].floatValue          = 0.2f;
-    configValues["decoration:dim_around"].floatValue           = 0.4f;
-    configValues["decoration:screen_shader"].strValue          = STRVAL_EMPTY;
+    configValues["decoration:rounding"].intValue                 = 0;
+    configValues["decoration:blur:enabled"].intValue             = 1;
+    configValues["decoration:blur:size"].intValue                = 8;
+    configValues["decoration:blur:passes"].intValue              = 1;
+    configValues["decoration:blur:ignore_opacity"].intValue      = 0;
+    configValues["decoration:blur:new_optimizations"].intValue   = 1;
+    configValues["decoration:blur:xray"].intValue                = 0;
+    configValues["decoration:blur:contrast"].floatValue          = 0.8916;
+    configValues["decoration:blur:brightness"].floatValue        = 1.0;
+    configValues["decoration:blur:vibrancy"].floatValue          = 0.1696;
+    configValues["decoration:blur:vibrancy_darkness"].floatValue = 0.0;
+    configValues["decoration:blur:noise"].floatValue             = 0.0117;
+    configValues["decoration:blur:special"].intValue             = 0;
+    configValues["decoration:active_opacity"].floatValue         = 1;
+    configValues["decoration:inactive_opacity"].floatValue       = 1;
+    configValues["decoration:fullscreen_opacity"].floatValue     = 1;
+    configValues["decoration:no_blur_on_oversized"].intValue     = 0;
+    configValues["decoration:drop_shadow"].intValue              = 1;
+    configValues["decoration:shadow_range"].intValue             = 4;
+    configValues["decoration:shadow_render_power"].intValue      = 3;
+    configValues["decoration:shadow_ignore_window"].intValue     = 1;
+    configValues["decoration:shadow_offset"].vecValue            = Vector2D();
+    configValues["decoration:shadow_scale"].floatValue           = 1.f;
+    configValues["decoration:col.shadow"].intValue               = 0xee1a1a1a;
+    configValues["decoration:col.shadow_inactive"].intValue      = INT_MAX;
+    configValues["decoration:dim_inactive"].intValue             = 0;
+    configValues["decoration:dim_strength"].floatValue           = 0.5f;
+    configValues["decoration:dim_special"].floatValue            = 0.2f;
+    configValues["decoration:dim_around"].floatValue             = 0.4f;
+    configValues["decoration:screen_shader"].strValue            = STRVAL_EMPTY;
 
     configValues["dwindle:pseudotile"].intValue                   = 0;
     configValues["dwindle:force_split"].intValue                  = 0;
@@ -1161,13 +1165,13 @@ void CConfigManager::handleWorkspaceRules(const std::string& command, const std:
     auto           rules = value.substr(FIRST_DELIM + 1);
     SWorkspaceRule wsRule;
     wsRule.workspaceString = first_ident;
-    if (id == INT_MAX) {
+    if (id == WORKSPACE_INVALID) {
         // it could be the monitor. If so, second value MUST be
         // the workspace.
         const auto WORKSPACE_DELIM = value.find_first_of(',', FIRST_DELIM + 1);
         auto       wsIdent         = removeBeginEndSpacesTabs(value.substr(FIRST_DELIM + 1, (WORKSPACE_DELIM - FIRST_DELIM - 1)));
         id                         = getWorkspaceIDFromString(wsIdent, name);
-        if (id == INT_MAX) {
+        if (id == WORKSPACE_INVALID) {
             Debug::log(ERR, "Invalid workspace identifier found: {}", wsIdent);
             parseError = "Invalid workspace identifier found: " + wsIdent;
             return;

@@ -28,13 +28,22 @@ static std::string getWorkspaceNameFromSpecialID(const int workspaceID) {
     return workspace->m_szName;
 }
 
-std::string monitorsRequest(HyprCtl::eHyprCtlOutputFormat format) {
+std::string monitorsRequest(std::string request, HyprCtl::eHyprCtlOutputFormat format) {
+    CVarList vars(request, 0, ' ');
+    auto     allMonitors = false;
+
+    if (vars.size() > 2)
+        return "too many args";
+
+    if (vars.size() == 2 && vars[1] == "all")
+        allMonitors = true;
+
     std::string result = "";
     if (format == HyprCtl::FORMAT_JSON) {
         result += "[";
 
-        for (auto& m : g_pCompositor->m_vMonitors) {
-            if (!m->output)
+        for (auto& m : allMonitors ? g_pCompositor->m_vRealMonitors : g_pCompositor->m_vMonitors) {
+            if (!m->output || m->ID == -1ull)
                 continue;
 
             result += std::format(
@@ -68,8 +77,9 @@ std::string monitorsRequest(HyprCtl::eHyprCtlOutputFormat format) {
 }},)#",
                 m->ID, escapeJSONStrings(m->szName), escapeJSONStrings(m->output->description ? m->output->description : ""), (m->output->make ? m->output->make : ""),
                 (m->output->model ? m->output->model : ""), (m->output->serial ? m->output->serial : ""), (int)m->vecPixelSize.x, (int)m->vecPixelSize.y, m->refreshRate,
-                (int)m->vecPosition.x, (int)m->vecPosition.y, m->activeWorkspace, escapeJSONStrings(g_pCompositor->getWorkspaceByID(m->activeWorkspace)->m_szName),
-                m->specialWorkspaceID, escapeJSONStrings(getWorkspaceNameFromSpecialID(m->specialWorkspaceID)), (int)m->vecReservedTopLeft.x, (int)m->vecReservedTopLeft.y,
+                (int)m->vecPosition.x, (int)m->vecPosition.y, m->activeWorkspace,
+                (m->activeWorkspace == -1 ? "" : escapeJSONStrings(g_pCompositor->getWorkspaceByID(m->activeWorkspace)->m_szName)), m->specialWorkspaceID,
+                escapeJSONStrings(getWorkspaceNameFromSpecialID(m->specialWorkspaceID)), (int)m->vecReservedTopLeft.x, (int)m->vecReservedTopLeft.y,
                 (int)m->vecReservedBottomRight.x, (int)m->vecReservedBottomRight.y, m->scale, (int)m->transform, (m.get() == g_pCompositor->m_pLastMonitor ? "true" : "false"),
                 (m->dpmsStatus ? "true" : "false"), (m->output->adaptive_sync_status == WLR_OUTPUT_ADAPTIVE_SYNC_ENABLED ? "true" : "false"),
                 m->tearingState.activelyTearing ? "true" : "false");
@@ -79,21 +89,21 @@ std::string monitorsRequest(HyprCtl::eHyprCtlOutputFormat format) {
 
         result += "]";
     } else {
-        for (auto& m : g_pCompositor->m_vMonitors) {
-            if (!m->output)
+        for (auto& m : allMonitors ? g_pCompositor->m_vRealMonitors : g_pCompositor->m_vMonitors) {
+            if (!m->output || m->ID == -1ull)
                 continue;
 
-            result +=
-                std::format("Monitor {} (ID {}):\n\t{}x{}@{:.5f} at {}x{}\n\tdescription: {}\n\tmake: {}\n\tmodel: {}\n\tserial: {}\n\tactive workspace: {} ({})\n\tspecial "
-                            "workspace: {} ({})\n\treserved: {} "
-                            "{} {} {}\n\tscale: {:.2f}\n\ttransform: "
-                            "{}\n\tfocused: {}\n\tdpmsStatus: {}\n\tvrr: {}\n\tactivelyTearing: {}\n\n",
-                            m->szName, m->ID, (int)m->vecPixelSize.x, (int)m->vecPixelSize.y, m->refreshRate, (int)m->vecPosition.x, (int)m->vecPosition.y,
-                            (m->output->description ? m->output->description : ""), (m->output->make ? m->output->make : ""), (m->output->model ? m->output->model : ""),
-                            (m->output->serial ? m->output->serial : ""), m->activeWorkspace, g_pCompositor->getWorkspaceByID(m->activeWorkspace)->m_szName, m->specialWorkspaceID,
-                            getWorkspaceNameFromSpecialID(m->specialWorkspaceID), (int)m->vecReservedTopLeft.x, (int)m->vecReservedTopLeft.y, (int)m->vecReservedBottomRight.x,
-                            (int)m->vecReservedBottomRight.y, m->scale, (int)m->transform, (m.get() == g_pCompositor->m_pLastMonitor ? "yes" : "no"), (int)m->dpmsStatus,
-                            (int)(m->output->adaptive_sync_status == WLR_OUTPUT_ADAPTIVE_SYNC_ENABLED), m->tearingState.activelyTearing);
+            result += std::format(
+                "Monitor {} (ID {}):\n\t{}x{}@{:.5f} at {}x{}\n\tdescription: {}\n\tmake: {}\n\tmodel: {}\n\tserial: {}\n\tactive workspace: {} ({})\n\tspecial "
+                "workspace: {} ({})\n\treserved: {} "
+                "{} {} {}\n\tscale: {:.2f}\n\ttransform: "
+                "{}\n\tfocused: {}\n\tdpmsStatus: {}\n\tvrr: {}\n\tactivelyTearing: {}\n\n",
+                m->szName, m->ID, (int)m->vecPixelSize.x, (int)m->vecPixelSize.y, m->refreshRate, (int)m->vecPosition.x, (int)m->vecPosition.y,
+                (m->output->description ? m->output->description : ""), (m->output->make ? m->output->make : ""), (m->output->model ? m->output->model : ""),
+                (m->output->serial ? m->output->serial : ""), m->activeWorkspace, (m->activeWorkspace == -1 ? "" : g_pCompositor->getWorkspaceByID(m->activeWorkspace)->m_szName),
+                m->specialWorkspaceID, getWorkspaceNameFromSpecialID(m->specialWorkspaceID), (int)m->vecReservedTopLeft.x, (int)m->vecReservedTopLeft.y,
+                (int)m->vecReservedBottomRight.x, (int)m->vecReservedBottomRight.y, m->scale, (int)m->transform, (m.get() == g_pCompositor->m_pLastMonitor ? "yes" : "no"),
+                (int)m->dpmsStatus, (int)(m->output->adaptive_sync_status == WLR_OUTPUT_ADAPTIVE_SYNC_ENABLED), m->tearingState.activelyTearing);
         }
     }
 
@@ -105,27 +115,20 @@ static std::string getGroupedData(CWindow* w, HyprCtl::eHyprCtlOutputFormat form
     if (!w->m_sGroupData.pNextWindow)
         return isJson ? "" : "0";
 
-    std::vector<CWindow*> groupMembers;
-
-    CWindow*              curr = w;
-    do {
-        groupMembers.push_back(curr);
-        curr = curr->m_sGroupData.pNextWindow;
-    } while (curr != w);
-
-    const auto         comma = isJson ? ", " : ",";
     std::ostringstream result;
 
-    bool               first = true;
-    for (auto& gw : groupMembers) {
-        if (first)
-            first = false;
-        else
-            result << comma;
+    CWindow*           head = w->getGroupHead();
+    CWindow*           curr = head;
+    while (true) {
         if (isJson)
-            result << std::format("\"0x{:x}\"", (uintptr_t)gw);
+            result << std::format("\"0x{:x}\"", (uintptr_t)curr);
         else
-            result << std::format("{:x}", (uintptr_t)gw);
+            result << std::format("{:x}", (uintptr_t)curr);
+        curr = curr->m_sGroupData.pNextWindow;
+        // We've wrapped around to the start, break out without trailing comma
+        if (curr == head)
+            break;
+        result << (isJson ? ", " : ",");
     }
 
     return result.str();
@@ -630,6 +633,20 @@ std::string animationsRequest(HyprCtl::eHyprCtlOutputFormat format) {
     }
 
     return ret;
+}
+
+std::string rollinglogRequest(HyprCtl::eHyprCtlOutputFormat format) {
+    std::string result = "";
+
+    if (format == HyprCtl::FORMAT_JSON) {
+        result += "[\n\"log\":\"";
+        result += escapeJSONStrings(Debug::rollingLog);
+        result += "\"]";
+    } else {
+        result = Debug::rollingLog;
+    }
+
+    return result;
 }
 
 std::string globalShortcutsRequest(HyprCtl::eHyprCtlOutputFormat format) {
@@ -1237,7 +1254,7 @@ std::string dispatchPlugin(std::string request) {
         const auto PLUGIN = g_pPluginSystem->loadPlugin(PATH);
 
         if (!PLUGIN)
-            return "error in loading plugin";
+            return "error in loading plugin, last error: " + g_pPluginSystem->m_szLastError;
     } else if (OPERATION == "unload") {
         if (vars.size() < 3)
             return "not enough args";
@@ -1326,8 +1343,8 @@ std::string getReply(std::string request) {
             request = request.substr(sepIndex + 1); // remove flags and separator so we can compare the rest of the string
     }
 
-    if (request == "monitors")
-        return monitorsRequest(format);
+    if (request.starts_with("monitors"))
+        return monitorsRequest(request, format);
     else if (request == "workspaces")
         return workspacesRequest(format);
     else if (request == "workspacerules")
@@ -1358,6 +1375,8 @@ std::string getReply(std::string request) {
         return globalShortcutsRequest(format);
     else if (request == "animations")
         return animationsRequest(format);
+    else if (request == "rollinglog")
+        return rollinglogRequest(format);
     else if (request.starts_with("plugin"))
         return dispatchPlugin(request);
     else if (request.starts_with("notify"))
@@ -1392,14 +1411,14 @@ int hyprCtlFDTick(int fd, uint32_t mask, void* data) {
     if (mask & WL_EVENT_ERROR || mask & WL_EVENT_HANGUP)
         return 0;
 
-    sockaddr_in clientAddress;
-    socklen_t   clientSize = sizeof(clientAddress);
+    sockaddr_in            clientAddress;
+    socklen_t              clientSize = sizeof(clientAddress);
 
-    const auto  ACCEPTEDCONNECTION = accept4(HyprCtl::iSocketFD, (sockaddr*)&clientAddress, &clientSize, SOCK_CLOEXEC);
+    const auto             ACCEPTEDCONNECTION = accept4(HyprCtl::iSocketFD, (sockaddr*)&clientAddress, &clientSize, SOCK_CLOEXEC);
 
-    char        readBuffer[1024];
+    std::array<char, 1024> readBuffer;
 
-    fd_set      fdset;
+    fd_set                 fdset;
     FD_ZERO(&fdset);
     FD_SET(ACCEPTEDCONNECTION, &fdset);
     timeval timeout = {.tv_sec = 0, .tv_usec = 5000};
@@ -1410,10 +1429,17 @@ int hyprCtlFDTick(int fd, uint32_t mask, void* data) {
         return 0;
     }
 
-    auto messageSize                                     = read(ACCEPTEDCONNECTION, readBuffer, 1024);
-    readBuffer[messageSize == 1024 ? 1023 : messageSize] = '\0';
-
-    std::string request(readBuffer);
+    std::string request;
+    while (true) {
+        readBuffer.fill(0);
+        auto messageSize = read(ACCEPTEDCONNECTION, readBuffer.data(), 1023);
+        if (messageSize < 1)
+            break;
+        std::string recvd = readBuffer.data();
+        request += recvd;
+        if (messageSize < 1023)
+            break;
+    }
 
     std::string reply = "";
 

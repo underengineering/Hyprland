@@ -58,12 +58,12 @@ CBox& CBox::applyFromWlr() {
 }
 
 CBox& CBox::round() {
-    float newW = x + w - std::floor(x);
-    float newH = y + h - std::floor(y);
-    x          = std::floor(x);
-    y          = std::floor(y);
-    w          = std::floor(newW);
-    h          = std::floor(newH);
+    float newW = x + w - std::round(x);
+    float newH = y + h - std::round(y);
+    x          = std::round(x);
+    y          = std::round(y);
+    w          = std::round(newW);
+    h          = std::round(newH);
 
     return *this;
 }
@@ -96,11 +96,24 @@ CBox& CBox::scaleFromCenter(double scale) {
     return *this;
 }
 
+CBox& CBox::expand(const double& value) {
+    x -= value;
+    y -= value;
+    w += value * 2.0;
+    h += value * 2.0;
+
+    return *this;
+}
+
 CBox CBox::roundInternal() {
     float newW = x + w - std::floor(x);
     float newH = y + h - std::floor(y);
 
     return CBox{std::floor(x), std::floor(y), std::floor(newW), std::floor(newH)};
+}
+
+CBox CBox::copy() const {
+    return CBox{*this};
 }
 
 Vector2D CBox::pos() const {
@@ -109,4 +122,8 @@ Vector2D CBox::pos() const {
 
 Vector2D CBox::size() const {
     return {w, h};
+}
+
+SWindowDecorationExtents CBox::extentsFrom(const CBox& small) {
+    return {{small.x - x, small.y - y}, {w - small.w - (small.x - x), h - small.h - (small.y - y)}};
 }

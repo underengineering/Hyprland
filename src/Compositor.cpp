@@ -81,6 +81,7 @@ CCompositor::CCompositor() {
 
 CCompositor::~CCompositor() {
     cleanup();
+    g_pDecorationPositioner.reset();
     g_pPluginSystem.reset();
     g_pHyprNotificationOverlay.reset();
     g_pDebugOverlay.reset();
@@ -441,6 +442,9 @@ void CCompositor::initManagers(eManagersInitStage stage) {
             Debug::log(LOG, "Creating the PluginSystem!");
             g_pPluginSystem = std::make_unique<CPluginSystem>();
             g_pConfigManager->handlePluginLoads();
+
+            Debug::log(LOG, "Creating the DecorationPositioner!");
+            g_pDecorationPositioner = std::make_unique<CDecorationPositioner>();
         } break;
         default: UNREACHABLE();
     }
@@ -626,46 +630,6 @@ bool CCompositor::windowExists(CWindow* pWindow) {
     return false;
 }
 
-CWindow* CCompositor::vectorToWindow(const Vector2D& pos) {
-    const auto PMONITOR = getMonitorFromVector(pos);
-
-    if (PMONITOR->specialWorkspaceID) {
-        for (auto& w : m_vWindows | std::views::reverse) {
-            auto box = w->getWindowMainSurfaceBox();
-            if (w->m_bIsFloating && w->m_iWorkspaceID == PMONITOR->specialWorkspaceID && w->m_bIsMapped && box.containsPoint(pos) && !w->isHidden() && !w->m_bNoFocus)
-                return w.get();
-        }
-
-        for (auto& w : m_vWindows) {
-            auto box = w->getWindowMainSurfaceBox();
-            if (w->m_iWorkspaceID == PMONITOR->specialWorkspaceID && box.containsPoint(pos) && w->m_bIsMapped && !w->m_bIsFloating && !w->isHidden() && !w->m_bNoFocus)
-                return w.get();
-        }
-    }
-
-    // pinned
-    for (auto& w : m_vWindows | std::views::reverse) {
-        auto box = w->getWindowMainSurfaceBox();
-        if (box.containsPoint(pos) && w->m_bIsMapped && w->m_bIsFloating && !w->isHidden() && w->m_bPinned && !w->m_bNoFocus)
-            return w.get();
-    }
-
-    // first loop over floating cuz they're above, m_vWindows should be sorted bottom->top, for tiled it doesn't matter.
-    for (auto& w : m_vWindows | std::views::reverse) {
-        auto box = w->getWindowMainSurfaceBox();
-        if (box.containsPoint(pos) && w->m_bIsMapped && w->m_bIsFloating && isWorkspaceVisible(w->m_iWorkspaceID) && !w->isHidden() && !w->m_bPinned && !w->m_bNoFocus)
-            return w.get();
-    }
-
-    for (auto& w : m_vWindows) {
-        auto box = w->getWindowMainSurfaceBox();
-        if (box.containsPoint(pos) && w->m_bIsMapped && !w->m_bIsFloating && PMONITOR->activeWorkspace == w->m_iWorkspaceID && !w->isHidden() && !w->m_bNoFocus)
-            return w.get();
-    }
-
-    return nullptr;
-}
-
 CWindow* CCompositor::vectorToWindowTiled(const Vector2D& pos) {
     const auto PMONITOR = getMonitorFromVector(pos);
 
@@ -686,36 +650,18 @@ CWindow* CCompositor::vectorToWindowTiled(const Vector2D& pos) {
     return nullptr;
 }
 
-CWindow* CCompositor::vectorToWindowIdeal(const Vector2D& pos) {
+CWindow* CCompositor::vectorToWindowIdeal(const Vector2D& pos, CWindow* pIgnoreWindow) {
     const auto         PMONITOR          = getMonitorFromVector(pos);
     static auto* const PRESIZEONBORDER   = &g_pConfigManager->getConfigValuePtr("general:resize_on_border")->intValue;
     static auto* const PBORDERSIZE       = &g_pConfigManager->getConfigValuePtr("general:border_size")->intValue;
     static auto* const PBORDERGRABEXTEND = &g_pConfigManager->getConfigValuePtr("general:extend_border_grab_area")->intValue;
     const auto         BORDER_GRAB_AREA  = *PRESIZEONBORDER ? *PBORDERSIZE + *PBORDERGRABEXTEND : 0;
 
-    // special workspace
-    if (PMONITOR->specialWorkspaceID) {
-        for (auto& w : m_vWindows | std::views::reverse) {
-            const auto BB  = w->getWindowInputBox();
-            CBox       box = {BB.x - BORDER_GRAB_AREA, BB.y - BORDER_GRAB_AREA, BB.width + 2 * BORDER_GRAB_AREA, BB.height + 2 * BORDER_GRAB_AREA};
-            if (w->m_bIsFloating && w->m_iWorkspaceID == PMONITOR->specialWorkspaceID && w->m_bIsMapped && box.containsPoint(pos) && !w->isHidden() && !w->m_bX11ShouldntFocus &&
-                !w->m_bNoFocus)
-                return w.get();
-        }
-
-        for (auto& w : m_vWindows) {
-            CBox box = {w->m_vPosition.x, w->m_vPosition.y, w->m_vSize.x, w->m_vSize.y};
-            if (!w->m_bIsFloating && w->m_iWorkspaceID == PMONITOR->specialWorkspaceID && w->m_bIsMapped && box.containsPoint(pos) && !w->isHidden() && !w->m_bX11ShouldntFocus &&
-                !w->m_bNoFocus)
-                return w.get();
-        }
-    }
-
     // pinned windows on top of floating regardless
     for (auto& w : m_vWindows | std::views::reverse) {
         const auto BB  = w->getWindowInputBox();
         CBox       box = {BB.x - BORDER_GRAB_AREA, BB.y - BORDER_GRAB_AREA, BB.width + 2 * BORDER_GRAB_AREA, BB.height + 2 * BORDER_GRAB_AREA};
-        if (w->m_bIsFloating && w->m_bIsMapped && !w->isHidden() && !w->m_bX11ShouldntFocus && w->m_bPinned && !w->m_bNoFocus) {
+        if (w->m_bIsFloating && w->m_bIsMapped && !w->isHidden() && !w->m_bX11ShouldntFocus && w->m_bPinned && !w->m_bNoFocus && w.get() != pIgnoreWindow) {
             if (box.containsPoint({m_sWLRCursor->x, m_sWLRCursor->y}))
                 return w.get();
 
@@ -726,48 +672,71 @@ CWindow* CCompositor::vectorToWindowIdeal(const Vector2D& pos) {
         }
     }
 
-    // first loop over floating cuz they're above, m_lWindows should be sorted bottom->top, for tiled it doesn't matter.
-    for (auto& w : m_vWindows | std::views::reverse) {
-        const auto BB  = w->getWindowInputBox();
-        CBox       box = {BB.x - BORDER_GRAB_AREA, BB.y - BORDER_GRAB_AREA, BB.width + 2 * BORDER_GRAB_AREA, BB.height + 2 * BORDER_GRAB_AREA};
-        if (w->m_bIsFloating && w->m_bIsMapped && isWorkspaceVisible(w->m_iWorkspaceID) && !w->isHidden() && !w->m_bPinned && !w->m_bNoFocus) {
-            // OR windows should add focus to parent
-            if (w->m_bX11ShouldntFocus && w->m_iX11Type != 2)
+    auto windowForWorkspace = [&](bool special) -> CWindow* {
+        // first loop over floating cuz they're above, m_lWindows should be sorted bottom->top, for tiled it doesn't matter.
+        for (auto& w : m_vWindows | std::views::reverse) {
+
+            if (special && !isWorkspaceSpecial(w->m_iWorkspaceID)) // because special floating may creep up into regular
                 continue;
 
-            if (box.containsPoint({m_sWLRCursor->x, m_sWLRCursor->y})) {
+            const auto BB  = w->getWindowInputBox();
+            CBox       box = {BB.x - BORDER_GRAB_AREA, BB.y - BORDER_GRAB_AREA, BB.width + 2 * BORDER_GRAB_AREA, BB.height + 2 * BORDER_GRAB_AREA};
+            if (w->m_bIsFloating && w->m_bIsMapped && isWorkspaceVisible(w->m_iWorkspaceID) && !w->isHidden() && !w->m_bPinned && !w->m_bNoFocus && w.get() != pIgnoreWindow) {
+                // OR windows should add focus to parent
+                if (w->m_bX11ShouldntFocus && w->m_iX11Type != 2)
+                    continue;
 
-                if (w->m_bIsX11 && w->m_iX11Type == 2 && !wlr_xwayland_or_surface_wants_focus(w->m_uSurface.xwayland)) {
-                    // Override Redirect
-                    return g_pCompositor->m_pLastWindow; // we kinda trick everything here.
-                                                         // TODO: this is wrong, we should focus the parent, but idk how to get it considering it's nullptr in most cases.
+                if (box.containsPoint({m_sWLRCursor->x, m_sWLRCursor->y})) {
+
+                    if (w->m_bIsX11 && w->m_iX11Type == 2 && !wlr_xwayland_or_surface_wants_focus(w->m_uSurface.xwayland)) {
+                        // Override Redirect
+                        return g_pCompositor->m_pLastWindow; // we kinda trick everything here.
+                                                             // TODO: this is wrong, we should focus the parent, but idk how to get it considering it's nullptr in most cases.
+                    }
+
+                    return w.get();
                 }
 
-                return w.get();
+                if (!w->m_bIsX11) {
+                    if (w->hasPopupAt(pos))
+                        return w.get();
+                }
             }
+        }
 
-            if (!w->m_bIsX11) {
-                if (w->hasPopupAt(pos))
+        // for windows, we need to check their extensions too, first.
+        for (auto& w : m_vWindows) {
+            if (special != isWorkspaceSpecial(w->m_iWorkspaceID))
+                continue;
+
+            const int64_t WORKSPACEID = special ? PMONITOR->specialWorkspaceID : PMONITOR->activeWorkspace;
+
+            if (!w->m_bIsX11 && !w->m_bIsFloating && w->m_bIsMapped && w->m_iWorkspaceID == WORKSPACEID && !w->isHidden() && !w->m_bX11ShouldntFocus && !w->m_bNoFocus &&
+                w.get() != pIgnoreWindow) {
+                if ((w)->hasPopupAt(pos))
                     return w.get();
             }
         }
-    }
+        for (auto& w : m_vWindows) {
+            if (special != isWorkspaceSpecial(w->m_iWorkspaceID))
+                continue;
 
-    // for windows, we need to check their extensions too, first.
-    for (auto& w : m_vWindows) {
-        if (!w->m_bIsX11 && !w->m_bIsFloating && w->m_bIsMapped && w->m_iWorkspaceID == PMONITOR->activeWorkspace && !w->isHidden() && !w->m_bX11ShouldntFocus && !w->m_bNoFocus) {
-            if ((w)->hasPopupAt(pos))
+            const int64_t WORKSPACEID = special ? PMONITOR->specialWorkspaceID : PMONITOR->activeWorkspace;
+
+            CBox          box = {w->m_vPosition.x, w->m_vPosition.y, w->m_vSize.x, w->m_vSize.y};
+            if (!w->m_bIsFloating && w->m_bIsMapped && box.containsPoint(pos) && w->m_iWorkspaceID == WORKSPACEID && !w->isHidden() && !w->m_bX11ShouldntFocus && !w->m_bNoFocus &&
+                w.get() != pIgnoreWindow)
                 return w.get();
         }
-    }
-    for (auto& w : m_vWindows) {
-        CBox box = {w->m_vPosition.x, w->m_vPosition.y, w->m_vSize.x, w->m_vSize.y};
-        if (!w->m_bIsFloating && w->m_bIsMapped && box.containsPoint(pos) && w->m_iWorkspaceID == PMONITOR->activeWorkspace && !w->isHidden() && !w->m_bX11ShouldntFocus &&
-            !w->m_bNoFocus)
-            return w.get();
-    }
 
-    return nullptr;
+        return nullptr;
+    };
+
+    // special workspace
+    if (PMONITOR->specialWorkspaceID)
+        return windowForWorkspace(true);
+
+    return windowForWorkspace(false);
 }
 
 CWindow* CCompositor::windowFromCursor() {
@@ -1501,6 +1470,9 @@ void CCompositor::addToFadingOutSafe(CWindow* pWindow) {
 
 CWindow* CCompositor::getWindowInDirection(CWindow* pWindow, char dir) {
 
+    if (!isDirection(dir))
+        return nullptr;
+
     // 0 -> history, 1 -> shared length
     static auto* const PMETHOD = &g_pConfigManager->getConfigValuePtr("binds:focus_preferred_method")->intValue;
 
@@ -1515,77 +1487,127 @@ CWindow* CCompositor::getWindowInDirection(CWindow* pWindow, char dir) {
     const auto POSA  = Vector2D(WINDOWIDEALBB.x, WINDOWIDEALBB.y);
     const auto SIZEA = Vector2D(WINDOWIDEALBB.width, WINDOWIDEALBB.height);
 
+    const auto PWORKSPACE   = g_pCompositor->getWorkspaceByID(pWindow->m_iWorkspaceID);
     auto       leaderValue  = -1;
     CWindow*   leaderWindow = nullptr;
 
-    for (auto& w : m_vWindows) {
-        if (w.get() == pWindow || !w->m_bIsMapped || w->isHidden() || w->m_bIsFloating || !isWorkspaceVisible(w->m_iWorkspaceID))
-            continue;
+    if (!pWindow->m_bIsFloating) {
 
-        if (pWindow->m_iMonitorID == w->m_iMonitorID && pWindow->m_iWorkspaceID != w->m_iWorkspaceID)
-            continue;
+        // for tiled windows, we calc edges
+        for (auto& w : m_vWindows) {
+            if (w.get() == pWindow || !w->m_bIsMapped || w->isHidden() || w->m_bIsFloating || !isWorkspaceVisible(w->m_iWorkspaceID))
+                continue;
 
-        const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(w->m_iWorkspaceID);
-        if (PWORKSPACE->m_bHasFullscreenWindow && !w->m_bIsFullscreen && !w->m_bCreatedOverFullscreen)
-            continue;
+            if (pWindow->m_iMonitorID == w->m_iMonitorID && pWindow->m_iWorkspaceID != w->m_iWorkspaceID)
+                continue;
 
-        const auto BWINDOWIDEALBB = w->getWindowIdealBoundingBoxIgnoreReserved();
+            if (PWORKSPACE->m_bHasFullscreenWindow && !w->m_bIsFullscreen && !w->m_bCreatedOverFullscreen)
+                continue;
 
-        const auto POSB  = Vector2D(BWINDOWIDEALBB.x, BWINDOWIDEALBB.y);
-        const auto SIZEB = Vector2D(BWINDOWIDEALBB.width, BWINDOWIDEALBB.height);
+            const auto BWINDOWIDEALBB = w->getWindowIdealBoundingBoxIgnoreReserved();
 
-        double     intersectLength = -1;
+            const auto POSB  = Vector2D(BWINDOWIDEALBB.x, BWINDOWIDEALBB.y);
+            const auto SIZEB = Vector2D(BWINDOWIDEALBB.width, BWINDOWIDEALBB.height);
 
-        switch (dir) {
-            case 'l':
-                if (STICKS(POSA.x, POSB.x + SIZEB.x)) {
-                    intersectLength = std::max(0.0, std::min(POSA.y + SIZEA.y, POSB.y + SIZEB.y) - std::max(POSA.y, POSB.y));
-                }
-                break;
-            case 'r':
-                if (STICKS(POSA.x + SIZEA.x, POSB.x)) {
-                    intersectLength = std::max(0.0, std::min(POSA.y + SIZEA.y, POSB.y + SIZEB.y) - std::max(POSA.y, POSB.y));
-                }
-                break;
-            case 't':
-            case 'u':
-                if (STICKS(POSA.y, POSB.y + SIZEB.y)) {
-                    intersectLength = std::max(0.0, std::min(POSA.x + SIZEA.x, POSB.x + SIZEB.x) - std::max(POSA.x, POSB.x));
-                }
-                break;
-            case 'b':
-            case 'd':
-                if (STICKS(POSA.y + SIZEA.y, POSB.y)) {
-                    intersectLength = std::max(0.0, std::min(POSA.x + SIZEA.x, POSB.x + SIZEB.x) - std::max(POSA.x, POSB.x));
-                }
-                break;
-        }
+            double     intersectLength = -1;
 
-        if (*PMETHOD == 0 /* history */) {
-            if (intersectLength > 0) {
+            switch (dir) {
+                case 'l':
+                    if (STICKS(POSA.x, POSB.x + SIZEB.x)) {
+                        intersectLength = std::max(0.0, std::min(POSA.y + SIZEA.y, POSB.y + SIZEB.y) - std::max(POSA.y, POSB.y));
+                    }
+                    break;
+                case 'r':
+                    if (STICKS(POSA.x + SIZEA.x, POSB.x)) {
+                        intersectLength = std::max(0.0, std::min(POSA.y + SIZEA.y, POSB.y + SIZEB.y) - std::max(POSA.y, POSB.y));
+                    }
+                    break;
+                case 't':
+                case 'u':
+                    if (STICKS(POSA.y, POSB.y + SIZEB.y)) {
+                        intersectLength = std::max(0.0, std::min(POSA.x + SIZEA.x, POSB.x + SIZEB.x) - std::max(POSA.x, POSB.x));
+                    }
+                    break;
+                case 'b':
+                case 'd':
+                    if (STICKS(POSA.y + SIZEA.y, POSB.y)) {
+                        intersectLength = std::max(0.0, std::min(POSA.x + SIZEA.x, POSB.x + SIZEB.x) - std::max(POSA.x, POSB.x));
+                    }
+                    break;
+            }
 
-                // get idx
-                int windowIDX = -1;
-                for (size_t i = 0; i < g_pCompositor->m_vWindowFocusHistory.size(); ++i) {
-                    if (g_pCompositor->m_vWindowFocusHistory[i] == w.get()) {
-                        windowIDX = i;
-                        break;
+            if (*PMETHOD == 0 /* history */) {
+                if (intersectLength > 0) {
+
+                    // get idx
+                    int windowIDX = -1;
+                    for (size_t i = 0; i < g_pCompositor->m_vWindowFocusHistory.size(); ++i) {
+                        if (g_pCompositor->m_vWindowFocusHistory[i] == w.get()) {
+                            windowIDX = i;
+                            break;
+                        }
+                    }
+
+                    windowIDX = g_pCompositor->m_vWindowFocusHistory.size() - windowIDX;
+
+                    if (windowIDX > leaderValue) {
+                        leaderValue  = windowIDX;
+                        leaderWindow = w.get();
                     }
                 }
-
-                windowIDX = g_pCompositor->m_vWindowFocusHistory.size() - windowIDX;
-
-                if (windowIDX > leaderValue) {
-                    leaderValue  = windowIDX;
+            } else /* length */ {
+                if (intersectLength > leaderValue) {
+                    leaderValue  = intersectLength;
                     leaderWindow = w.get();
                 }
             }
-        } else /* length */ {
-            if (intersectLength > leaderValue) {
-                leaderValue  = intersectLength;
+        }
+    } else {
+        // for floating windows, we calculate best distance and angle.
+        // if there is a window with angle better than THRESHOLD, only distance counts
+
+        if (dir == 'u')
+            dir = 't';
+        if (dir == 'd')
+            dir = 'b';
+
+        static const std::unordered_map<char, Vector2D> VECTORS = {{'r', {1, 0}}, {'t', {0, -1}}, {'b', {0, 1}}, {'l', {-1, 0}}};
+
+        //
+        auto vectorAngles = [](Vector2D a, Vector2D b) -> double {
+            double dot = a.x * b.x + a.y * b.y;
+            double ang = std::acos(dot / (a.size() * b.size()));
+            return ang;
+        };
+
+        float           bestAngleAbs = 2.0 * M_PI;
+        constexpr float THRESHOLD    = 0.3 * M_PI;
+
+        for (auto& w : m_vWindows) {
+            if (w.get() == pWindow || !w->m_bIsMapped || w->isHidden() || !w->m_bIsFloating || !isWorkspaceVisible(w->m_iWorkspaceID))
+                continue;
+
+            if (pWindow->m_iMonitorID == w->m_iMonitorID && pWindow->m_iWorkspaceID != w->m_iWorkspaceID)
+                continue;
+
+            if (PWORKSPACE->m_bHasFullscreenWindow && !w->m_bIsFullscreen && !w->m_bCreatedOverFullscreen)
+                continue;
+
+            const auto DIST  = w->middle().distance(pWindow->middle());
+            const auto ANGLE = vectorAngles(Vector2D{w->middle() - pWindow->middle()}, VECTORS.at(dir));
+
+            if (ANGLE > M_PI_2)
+                continue; // if the angle is over 90 degrees, ignore. Wrong direction entirely.
+
+            if ((bestAngleAbs < THRESHOLD && DIST < leaderValue && ANGLE < THRESHOLD) || (ANGLE < bestAngleAbs && bestAngleAbs > THRESHOLD) || leaderValue == -1) {
+                leaderValue  = DIST;
+                bestAngleAbs = ANGLE;
                 leaderWindow = w.get();
             }
         }
+
+        if (!leaderWindow && PWORKSPACE->m_bHasFullscreenWindow)
+            leaderWindow = g_pCompositor->getFullscreenWindowOnWorkspace(PWORKSPACE->m_iID);
     }
 
     if (leaderValue != -1)
@@ -1867,8 +1889,7 @@ void CCompositor::updateWindowAnimatedDecorationValues(CWindow* pWindow) {
         pWindow->m_cRealShadowColor.setValueAndWarp(CColor(0, 0, 0, 0)); // no shadow
     }
 
-    for (auto& d : pWindow->m_dWindowDecorations)
-        d->updateWindow(pWindow);
+    pWindow->updateWindowDecos();
 }
 
 int CCompositor::getNextAvailableMonitorID(std::string const& name) {
@@ -2297,6 +2318,21 @@ CWindow* CCompositor::getWindowByRegex(const std::string& regexp) {
     } else if (regexp.starts_with("pid:")) {
         mode       = MODE_PID;
         matchCheck = regexp.substr(4);
+    } else if (regexp.starts_with("floating") || regexp.starts_with("tiled")) {
+        // first floating on the current ws
+        if (!m_pLastWindow)
+            return nullptr;
+
+        const bool FLOAT = regexp.starts_with("floating");
+
+        for (auto& w : m_vWindows) {
+            if (!w->m_bIsMapped || w->m_bIsFloating != FLOAT || w->m_iWorkspaceID != m_pLastWindow->m_iWorkspaceID || w->isHidden())
+                continue;
+
+            return w.get();
+        }
+
+        return nullptr;
     }
 
     for (auto& w : g_pCompositor->m_vWindows) {
@@ -2489,6 +2525,8 @@ CWorkspace* CCompositor::createNewWorkspace(const int& id, const int& monid, con
 
     PWORKSPACE->m_iID        = id;
     PWORKSPACE->m_iMonitorID = monID;
+
+    PWORKSPACE->m_fAlpha.setValueAndWarp(0);
 
     return PWORKSPACE;
 }

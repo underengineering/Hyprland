@@ -207,10 +207,13 @@ void CHyprDwindleLayout::applyNodeDataToWindow(SDwindleNodeData* pNode, bool for
         // if special, we adjust the coords a bit
         static auto* const PSCALEFACTOR = &g_pConfigManager->getConfigValuePtr("dwindle:special_scale_factor")->floatValue;
 
-        PWINDOW->m_vRealPosition = calcPos + (calcSize - calcSize * *PSCALEFACTOR) / 2.f;
-        PWINDOW->m_vRealSize     = calcSize * *PSCALEFACTOR;
+        CBox               wb = {calcPos + (calcSize - calcSize * *PSCALEFACTOR) / 2.f, calcSize * *PSCALEFACTOR};
+        wb.round(); // avoid rounding mess
 
-        g_pXWaylandManager->setWindowSize(PWINDOW, calcSize * *PSCALEFACTOR);
+        PWINDOW->m_vRealPosition = wb.pos();
+        PWINDOW->m_vRealSize     = wb.size();
+
+        g_pXWaylandManager->setWindowSize(PWINDOW, wb.size());
     } else {
         PWINDOW->m_vRealSize     = calcSize;
         PWINDOW->m_vRealPosition = calcPos;
@@ -320,7 +323,7 @@ void CHyprDwindleLayout::onWindowCreatedTiling(CWindow* pWindow, eDirection dire
             if (!(wd->getDecorationFlags() & DECORATION_ALLOWS_MOUSE_INPUT))
                 continue;
 
-            if (wd->getWindowDecorationRegion().containsPoint(MOUSECOORDS)) {
+            if (g_pDecorationPositioner->getWindowDecorationBox(wd.get()).containsPoint(MOUSECOORDS)) {
                 if (!wd->onEndWindowDragOnDeco(pWindow, MOUSECOORDS))
                     return;
                 break;
@@ -331,9 +334,6 @@ void CHyprDwindleLayout::onWindowCreatedTiling(CWindow* pWindow, eDirection dire
     // if it's a group, add the window
     if (OPENINGON->pWindow->m_sGroupData.pNextWindow                                  // target is group
         && pWindow->canBeGroupedInto(OPENINGON->pWindow) && !m_vOverrideFocalPoint) { // we are not moving window
-        if (!pWindow->m_sGroupData.pNextWindow)
-            pWindow->m_dWindowDecorations.emplace_back(std::make_unique<CHyprGroupBarDecoration>(pWindow));
-
         m_lDwindleNodesData.remove(*PNODE);
 
         static const auto* USECURRPOS = &g_pConfigManager->getConfigValuePtr("group:insert_after_current")->intValue;
@@ -343,6 +343,9 @@ void CHyprDwindleLayout::onWindowCreatedTiling(CWindow* pWindow, eDirection dire
         pWindow->applyGroupRules();
         pWindow->updateWindowDecos();
         recalculateWindow(pWindow);
+
+        if (!pWindow->getDecorationByType(DECORATION_GROUPBAR))
+            pWindow->addWindowDeco(std::make_unique<CHyprGroupBarDecoration>(pWindow));
 
         return;
     }

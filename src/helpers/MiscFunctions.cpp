@@ -204,12 +204,12 @@ std::string removeBeginEndSpacesTabs(std::string str) {
     return str;
 }
 
-float getPlusMinusKeywordResult(std::string source, float relative) {
+std::optional<float> getPlusMinusKeywordResult(std::string source, float relative) {
     try {
         return relative + stof(source);
     } catch (...) {
         Debug::log(ERR, "Invalid arg \"{}\" in getPlusMinusKeywordResult!", source);
-        return INT_MAX;
+        return {};
     }
 }
 
@@ -242,8 +242,12 @@ bool isDirection(const std::string& arg) {
     return arg == "l" || arg == "r" || arg == "u" || arg == "d" || arg == "t" || arg == "b";
 }
 
+bool isDirection(const char& arg) {
+    return arg == 'l' || arg == 'r' || arg == 'u' || arg == 'd' || arg == 't' || arg == 'b';
+}
+
 int getWorkspaceIDFromString(const std::string& in, std::string& outName) {
-    int result = INT_MAX;
+    int result = WORKSPACE_INVALID;
     if (in.starts_with("special")) {
         outName = "special";
 
@@ -276,17 +280,17 @@ int getWorkspaceIDFromString(const std::string& in, std::string& outName) {
         }
     } else if (in.starts_with("prev")) {
         if (!g_pCompositor->m_pLastMonitor)
-            return INT_MAX;
+            return WORKSPACE_INVALID;
 
         const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(g_pCompositor->m_pLastMonitor->activeWorkspace);
 
         if (!PWORKSPACE)
-            return INT_MAX;
+            return WORKSPACE_INVALID;
 
         const auto PLASTWORKSPACE = g_pCompositor->getWorkspaceByID(PWORKSPACE->m_sPrevWorkspace.iID);
 
         if (!PLASTWORKSPACE)
-            return INT_MAX;
+            return WORKSPACE_INVALID;
 
         outName = PLASTWORKSPACE->m_szName;
         return PLASTWORKSPACE->m_iID;
@@ -294,10 +298,15 @@ int getWorkspaceIDFromString(const std::string& in, std::string& outName) {
         if (in[0] == 'r' && (in[1] == '-' || in[1] == '+') && isNumber(in.substr(2))) {
             if (!g_pCompositor->m_pLastMonitor) {
                 Debug::log(ERR, "Relative monitor workspace on monitor null!");
-                result = INT_MAX;
-                return result;
+                return WORKSPACE_INVALID;
             }
-            result = (int)getPlusMinusKeywordResult(in.substr(1), 0);
+
+            const auto PLUSMINUSRESULT = getPlusMinusKeywordResult(in.substr(1), 0);
+
+            if (!PLUSMINUSRESULT.has_value())
+                return WORKSPACE_INVALID;
+
+            result = (int)PLUSMINUSRESULT.value();
 
             int           remains = (int)result;
 
@@ -429,12 +438,16 @@ int getWorkspaceIDFromString(const std::string& in, std::string& outName) {
 
             if (!g_pCompositor->m_pLastMonitor) {
                 Debug::log(ERR, "Relative monitor workspace on monitor null!");
-                result = INT_MAX;
-                return result;
+                return WORKSPACE_INVALID;
             }
 
             // monitor relative
-            result = (int)getPlusMinusKeywordResult(in.substr(1), 0);
+            const auto PLUSMINUSRESULT = getPlusMinusKeywordResult(in.substr(1), 0);
+
+            if (!PLUSMINUSRESULT.has_value())
+                return WORKSPACE_INVALID;
+
+            result = (int)PLUSMINUSRESULT.value();
 
             // result now has +/- what we should move on mon
             int              remains = (int)result;
@@ -475,11 +488,15 @@ int getWorkspaceIDFromString(const std::string& in, std::string& outName) {
             outName = g_pCompositor->getWorkspaceByID(validWSes[currentItem])->m_szName;
         } else {
             if (in[0] == '+' || in[0] == '-') {
-                if (g_pCompositor->m_pLastMonitor)
-                    result = std::max((int)getPlusMinusKeywordResult(in, g_pCompositor->m_pLastMonitor->activeWorkspace), 1);
-                else {
+                if (g_pCompositor->m_pLastMonitor) {
+                    const auto PLUSMINUSRESULT = getPlusMinusKeywordResult(in, g_pCompositor->m_pLastMonitor->activeWorkspace);
+                    if (!PLUSMINUSRESULT.has_value())
+                        return WORKSPACE_INVALID;
+
+                    result = std::max((int)PLUSMINUSRESULT.value(), 1);
+                } else {
                     Debug::log(ERR, "Relative workspace on no mon!");
-                    result = INT_MAX;
+                    return WORKSPACE_INVALID;
                 }
             } else if (isNumber(in))
                 result = std::max(std::stoi(in), 1);
@@ -691,6 +708,10 @@ int64_t configStringToInt(const std::string& VALUE) {
     } else if (VALUE.starts_with("false") || VALUE.starts_with("off") || VALUE.starts_with("no")) {
         return 0;
     }
+
+    if (VALUE.empty() || !isNumber(VALUE))
+        return 0;
+
     return std::stoll(VALUE);
 }
 
