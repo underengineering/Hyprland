@@ -75,7 +75,7 @@ std::string monitorsRequest(std::string request, HyprCtl::eHyprCtlOutputFormat f
     "vrr": {},
     "activelyTearing": {}
 }},)#",
-                m->ID, escapeJSONStrings(m->szName), escapeJSONStrings(m->output->description ? m->output->description : ""), (m->output->make ? m->output->make : ""),
+                m->ID, escapeJSONStrings(m->szName), escapeJSONStrings(m->szDescription), (m->output->make ? m->output->make : ""),
                 (m->output->model ? m->output->model : ""), (m->output->serial ? m->output->serial : ""), (int)m->vecPixelSize.x, (int)m->vecPixelSize.y, m->refreshRate,
                 (int)m->vecPosition.x, (int)m->vecPosition.y, m->activeWorkspace,
                 (m->activeWorkspace == -1 ? "" : escapeJSONStrings(g_pCompositor->getWorkspaceByID(m->activeWorkspace)->m_szName)), m->specialWorkspaceID,
@@ -99,7 +99,7 @@ std::string monitorsRequest(std::string request, HyprCtl::eHyprCtlOutputFormat f
                 "{} {} {}\n\tscale: {:.2f}\n\ttransform: "
                 "{}\n\tfocused: {}\n\tdpmsStatus: {}\n\tvrr: {}\n\tactivelyTearing: {}\n\n",
                 m->szName, m->ID, (int)m->vecPixelSize.x, (int)m->vecPixelSize.y, m->refreshRate, (int)m->vecPosition.x, (int)m->vecPosition.y,
-                (m->output->description ? m->output->description : ""), (m->output->make ? m->output->make : ""), (m->output->model ? m->output->model : ""),
+                m->szDescription, (m->output->make ? m->output->make : ""), (m->output->model ? m->output->model : ""),
                 (m->output->serial ? m->output->serial : ""), m->activeWorkspace, (m->activeWorkspace == -1 ? "" : g_pCompositor->getWorkspaceByID(m->activeWorkspace)->m_szName),
                 m->specialWorkspaceID, getWorkspaceNameFromSpecialID(m->specialWorkspaceID), (int)m->vecReservedTopLeft.x, (int)m->vecReservedTopLeft.y,
                 (int)m->vecReservedBottomRight.x, (int)m->vecReservedBottomRight.y, m->scale, (int)m->transform, (m.get() == g_pCompositor->m_pLastMonitor ? "yes" : "no"),
@@ -260,7 +260,7 @@ static std::string getWorkspaceRuleData(const SWorkspaceRule& r, HyprCtl::eHyprC
         std::string       result = std::format(R"#({{
     "workspaceString": "{}"{}{}{}{}{}{}{}{}
 }})#",
-                                         escapeJSONStrings(r.workspaceString), monitor, default_, persistent, gapsIn, gapsOut, borderSize, border, rounding, decorate, shadow);
+                                               escapeJSONStrings(r.workspaceString), monitor, default_, persistent, gapsIn, gapsOut, borderSize, border, rounding, decorate, shadow);
 
         return result;
     } else {
@@ -276,7 +276,7 @@ static std::string getWorkspaceRuleData(const SWorkspaceRule& r, HyprCtl::eHyprC
         const std::string shadow     = std::format("\tshadow: {}\n", (bool)(r.shadow) ? boolToString(r.shadow.value()) : "<unset>");
 
         std::string       result = std::format("Workspace rule {}:\n{}{}{}{}{}{}{}{}{}{}\n", escapeJSONStrings(r.workspaceString), monitor, default_, persistent, gapsIn, gapsOut,
-                                         borderSize, border, rounding, decorate, shadow);
+                                               borderSize, border, rounding, decorate, shadow);
 
         return result;
     }
@@ -420,6 +420,28 @@ std::string layersRequest(HyprCtl::eHyprCtlOutputFormat format) {
         }
     }
 
+    return result;
+}
+
+std::string layoutsRequest(HyprCtl::eHyprCtlOutputFormat format) {
+    std::string result = "";
+    if (format == HyprCtl::FORMAT_JSON) {
+        result += "[";
+
+        for (auto& m : g_pLayoutManager->getAllLayoutNames()) {
+            result += std::format(
+                R"#(
+    "{}",)#",
+                m);
+        }
+        trimTrailingComma(result);
+
+        result += "\n]\n";
+    } else {
+        for (auto& m : g_pLayoutManager->getAllLayoutNames()) {
+            result += std::format("{}\n", m);
+        }
+    }
     return result;
 }
 
@@ -1377,6 +1399,8 @@ std::string getReply(std::string request) {
         return animationsRequest(format);
     else if (request == "rollinglog")
         return rollinglogRequest(format);
+    else if (request == "layouts")
+        return layoutsRequest(format);
     else if (request.starts_with("plugin"))
         return dispatchPlugin(request);
     else if (request.starts_with("notify"))

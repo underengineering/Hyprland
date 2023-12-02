@@ -641,11 +641,6 @@ void CKeybindManager::spawn(std::string args) {
         args  = args.substr(args.find_first_of(']') + 1);
     }
 
-    if (g_pXWaylandManager->m_sWLRXWayland)
-        args = "WAYLAND_DISPLAY=" + std::string(g_pCompositor->m_szWLDisplaySocket) + " DISPLAY=" + std::string(g_pXWaylandManager->m_sWLRXWayland->display_name) + " " + args;
-    else
-        args = "WAYLAND_DISPLAY=" + std::string(g_pCompositor->m_szWLDisplaySocket) + " " + args;
-
     const uint64_t PROC = spawnRaw(args);
 
     if (!RULES.empty()) {
@@ -1478,7 +1473,7 @@ void CKeybindManager::forceRendererReload(std::string args) {
         if (!m->output)
             continue;
 
-        auto rule = g_pConfigManager->getMonitorRuleFor(m->szName, m->output->description ? m->output->description : "");
+        auto rule = g_pConfigManager->getMonitorRuleFor(m->szName, m->szDescription);
         if (!g_pHyprRenderer->applyMonitorRule(m.get(), &rule, true)) {
             overAgain = true;
             break;
@@ -1908,7 +1903,7 @@ void CKeybindManager::alterZOrder(std::string args) {
     else if (POSITION == "bottom")
         g_pCompositor->changeWindowZOrder(PWINDOW, 0);
     else {
-        Debug::log(ERR, "alterZOrder: bad position: %s", POSITION);
+        Debug::log(ERR, "alterZOrder: bad position: {}", POSITION);
         return;
     }
 
@@ -2060,7 +2055,7 @@ void CKeybindManager::moveWindowOrGroup(std::string args) {
     static auto* const PIGNOREGROUPLOCK = &g_pConfigManager->getConfigValuePtr("binds:ignore_group_lock")->intValue;
 
     if (!isDirection(args)) {
-        Debug::log(ERR, "Cannot move into group in direction %c, unsupported direction. Supported: l,r,u/t,d/b", arg);
+        Debug::log(ERR, "Cannot move into group in direction {}, unsupported direction. Supported: l,r,u/t,d/b", arg);
         return;
     }
 
