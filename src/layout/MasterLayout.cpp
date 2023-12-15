@@ -42,17 +42,24 @@ SMasterWorkspaceData* CHyprMasterLayout::getMasterWorkspaceData(const int& ws) {
     const auto PWORKSPACEDATA   = &m_lMasterWorkspacesData.emplace_back();
     PWORKSPACEDATA->workspaceID = ws;
     const auto orientation      = &g_pConfigManager->getConfigValuePtr("master:orientation")->strValue;
-    if (*orientation == "top") {
+    const auto layoutoptsForWs  = g_pConfigManager->getWorkspaceRuleFor(g_pCompositor->getWorkspaceByID(ws)).layoutopts;
+    auto       orientationForWs = *orientation;
+
+    if (layoutoptsForWs.contains("orientation"))
+        orientationForWs = layoutoptsForWs.at("orientation");
+
+    if (orientationForWs == "top") {
         PWORKSPACEDATA->orientation = ORIENTATION_TOP;
-    } else if (*orientation == "right") {
+    } else if (orientationForWs == "right") {
         PWORKSPACEDATA->orientation = ORIENTATION_RIGHT;
-    } else if (*orientation == "bottom") {
+    } else if (orientationForWs == "bottom") {
         PWORKSPACEDATA->orientation = ORIENTATION_BOTTOM;
-    } else if (*orientation == "left") {
-        PWORKSPACEDATA->orientation = ORIENTATION_LEFT;
-    } else {
+    } else if (orientationForWs == "center") {
         PWORKSPACEDATA->orientation = ORIENTATION_CENTER;
+    } else {
+        PWORKSPACEDATA->orientation = ORIENTATION_LEFT;
     }
+
     return PWORKSPACEDATA;
 }
 
@@ -659,24 +666,20 @@ void CHyprMasterLayout::applyNodeDataToWindow(SMasterNodeData* pNode) {
         PWINDOW->m_sSpecialRenderData.rounding = false;
         PWINDOW->m_sSpecialRenderData.shadow   = false;
 
+        PWINDOW->updateWindowDecos();
+
         const auto RESERVED = PWINDOW->getFullWindowReservedArea();
 
-        const int  BORDERSIZE = PWINDOW->getRealBorderSize();
-
-        PWINDOW->m_vRealPosition = PWINDOW->m_vPosition + Vector2D(BORDERSIZE, BORDERSIZE) + RESERVED.topLeft;
-        PWINDOW->m_vRealSize     = PWINDOW->m_vSize - Vector2D(2 * BORDERSIZE, 2 * BORDERSIZE) - (RESERVED.topLeft + RESERVED.bottomRight);
-
-        PWINDOW->updateWindowDecos();
+        PWINDOW->m_vRealPosition = PWINDOW->m_vPosition + RESERVED.topLeft;
+        PWINDOW->m_vRealSize     = PWINDOW->m_vSize - (RESERVED.topLeft + RESERVED.bottomRight);
 
         g_pXWaylandManager->setWindowSize(PWINDOW, PWINDOW->m_vRealSize.goalv());
 
         return;
     }
 
-    const int  BORDERSIZE = PWINDOW->getRealBorderSize();
-
-    auto       calcPos  = PWINDOW->m_vPosition + Vector2D(BORDERSIZE, BORDERSIZE);
-    auto       calcSize = PWINDOW->m_vSize - Vector2D(2 * BORDERSIZE, 2 * BORDERSIZE);
+    auto       calcPos  = PWINDOW->m_vPosition;
+    auto       calcSize = PWINDOW->m_vSize;
 
     const auto OFFSETTOPLEFT = Vector2D(DISPLAYLEFT ? gapsOut : gapsIn, DISPLAYTOP ? gapsOut : gapsIn);
 

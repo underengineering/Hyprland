@@ -2,6 +2,7 @@
 #include "Compositor.hpp"
 #include "render/decorations/CHyprDropShadowDecoration.hpp"
 #include "render/decorations/CHyprGroupBarDecoration.hpp"
+#include "render/decorations/CHyprBorderDecoration.hpp"
 
 CWindow::CWindow() {
     m_vRealPosition.create(AVARTYPE_VECTOR, g_pConfigManager->getAnimationPropertyConfig("windowsIn"), (void*)this, AVARDAMAGE_ENTIRE);
@@ -14,6 +15,7 @@ CWindow::CWindow() {
     m_fDimPercent.create(AVARTYPE_FLOAT, g_pConfigManager->getAnimationPropertyConfig("fadeDim"), (void*)this, AVARDAMAGE_ENTIRE);
 
     addWindowDeco(std::make_unique<CHyprDropShadowDecoration>(this));
+    addWindowDeco(std::make_unique<CHyprBorderDecoration>(this));
 }
 
 CWindow::~CWindow() {
@@ -21,6 +23,12 @@ CWindow::~CWindow() {
         g_pCompositor->m_pLastFocus  = nullptr;
         g_pCompositor->m_pLastWindow = nullptr;
     }
+
+    if (!g_pHyprOpenGL)
+        return;
+
+    g_pHyprRenderer->makeEGLCurrent();
+    std::erase_if(g_pHyprOpenGL->m_mWindowFramebuffers, [&](const auto& other) { return other.first == this; });
 }
 
 SWindowDecorationExtents CWindow::getFullWindowExtents() {
@@ -958,7 +966,7 @@ float CWindow::rounding() {
 
     float              rounding = m_sAdditionalConfigData.rounding.toUnderlying() == -1 ? *PROUNDING : m_sAdditionalConfigData.rounding.toUnderlying();
 
-    return rounding;
+    return m_sSpecialRenderData.rounding ? rounding : 0;
 }
 
 void CWindow::updateSpecialRenderData() {
@@ -991,4 +999,9 @@ int CWindow::getRealBorderSize() {
 
 bool CWindow::canBeTorn() {
     return (m_sAdditionalConfigData.forceTearing.toUnderlying() || m_bTearingHint) && g_pHyprRenderer->m_bTearingEnvSatisfied;
+}
+
+bool CWindow::shouldSendFullscreenState() {
+    const auto MODE = g_pCompositor->getWorkspaceByID(m_iWorkspaceID)->m_efFullscreenMode;
+    return m_bFakeFullscreenState || (m_bIsFullscreen && (MODE == FULLSCREEN_FULL));
 }

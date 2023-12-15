@@ -168,7 +168,8 @@ bool CHyprRenderer::shouldRenderWindow(CWindow* pWindow, CMonitor* pMonitor, CWo
         if (PWINDOWWORKSPACE->m_vRenderOffset.isBeingAnimated() || PWINDOWWORKSPACE->m_fAlpha.isBeingAnimated() || PWINDOWWORKSPACE->m_bForceRendering) {
             return true;
         } else {
-            if (!(!PWINDOWWORKSPACE->m_bHasFullscreenWindow || pWindow->m_bIsFullscreen || (pWindow->m_bIsFloating && pWindow->m_bCreatedOverFullscreen)))
+            if (PWINDOWWORKSPACE->m_bHasFullscreenWindow && !pWindow->m_bIsFullscreen && !pWindow->m_bIsFloating && !pWindow->m_bCreatedOverFullscreen &&
+                pWindow->m_fAlpha.fl() == 0)
                 return false;
         }
     }
@@ -220,7 +221,7 @@ void CHyprRenderer::renderWorkspaceWindowsFullscreen(CMonitor* pMonitor, CWorksp
 
     // loop over the tiled windows that are fading out
     for (auto& w : g_pCompositor->m_vWindows) {
-        if (w->m_iWorkspaceID != pMonitor->activeWorkspace)
+        if (!shouldRenderWindow(w.get(), pMonitor, pWorkspace))
             continue;
 
         if (w->m_fAlpha.fl() == 0.f)
@@ -237,7 +238,7 @@ void CHyprRenderer::renderWorkspaceWindowsFullscreen(CMonitor* pMonitor, CWorksp
 
     // and floating ones too
     for (auto& w : g_pCompositor->m_vWindows) {
-        if (w->m_iWorkspaceID != pMonitor->activeWorkspace)
+        if (!shouldRenderWindow(w.get(), pMonitor, pWorkspace))
             continue;
 
         if (w->m_fAlpha.fl() == 0.f)
@@ -380,11 +381,10 @@ void CHyprRenderer::renderWindow(CWindow* pWindow, CMonitor* pMonitor, timespec*
 
     TRACY_GPU_ZONE("RenderWindow");
 
-    const auto         PWORKSPACE  = g_pCompositor->getWorkspaceByID(pWindow->m_iWorkspaceID);
-    const auto         REALPOS     = pWindow->m_vRealPosition.vec() + (pWindow->m_bPinned ? Vector2D{} : PWORKSPACE->m_vRenderOffset.vec());
-    static auto* const PDIMAROUND  = &g_pConfigManager->getConfigValuePtr("decoration:dim_around")->floatValue;
-    static auto* const PBORDERSIZE = &g_pConfigManager->getConfigValuePtr("general:border_size")->intValue;
-    static auto* const PBLUR       = &g_pConfigManager->getConfigValuePtr("decoration:blur:enabled")->intValue;
+    const auto         PWORKSPACE = g_pCompositor->getWorkspaceByID(pWindow->m_iWorkspaceID);
+    const auto         REALPOS    = pWindow->m_vRealPosition.vec() + (pWindow->m_bPinned ? Vector2D{} : PWORKSPACE->m_vRenderOffset.vec());
+    static auto* const PDIMAROUND = &g_pConfigManager->getConfigValuePtr("decoration:dim_around")->floatValue;
+    static auto* const PBLUR      = &g_pConfigManager->getConfigValuePtr("decoration:blur:enabled")->intValue;
 
     SRenderData        renderdata = {pMonitor, time};
     CBox               textureBox = {REALPOS.x, REALPOS.y, std::max(pWindow->m_vRealSize.vec().x, 5.0), std::max(pWindow->m_vRealSize.vec().y, 5.0)};
@@ -461,7 +461,7 @@ void CHyprRenderer::renderWindow(CWindow* pWindow, CMonitor* pMonitor, timespec*
     }
 
     // if window is floating and we have a slide animation, clip it to its full bb
-    if (!ignorePosition && pWindow->m_bIsFloating && !pWindow->m_bIsFullscreen && PWORKSPACE->m_vRenderOffset.isBeingAnimated()) {
+    if (!ignorePosition && pWindow->m_bIsFloating && !pWindow->m_bIsFullscreen && PWORKSPACE->m_vRenderOffset.isBeingAnimated() && !pWindow->m_bPinned) {
         CRegion rg                          = pWindow->getFullWindowBoundingBox().translate(-pMonitor->vecPosition + PWORKSPACE->m_vRenderOffset.vec()).scale(pMonitor->scale);
         g_pHyprOpenGL->m_RenderData.clipBox = rg.getExtents();
     }
@@ -479,7 +479,7 @@ void CHyprRenderer::renderWindow(CWindow* pWindow, CMonitor* pMonitor, timespec*
             }
         }
 
-        if (!pWindow->m_bIsFullscreen || PWORKSPACE->m_efFullscreenMode != FULLSCREEN_FULL) {
+        if (decorate) {
             for (auto& wd : pWindow->m_dWindowDecorations) {
                 if (wd->getDecorationLayer() != DECORATION_LAYER_BOTTOM)
                     continue;
@@ -502,7 +502,8 @@ void CHyprRenderer::renderWindow(CWindow* pWindow, CMonitor* pMonitor, timespec*
         if (pWindow->m_pWLSurface.small() && !pWindow->m_pWLSurface.m_bFillIgnoreSmall && renderdata.blur && *PBLUR) {
             CBox wb = {renderdata.x - pMonitor->vecPosition.x, renderdata.y - pMonitor->vecPosition.y, renderdata.w, renderdata.h};
             wb.scale(pMonitor->scale).round();
-            g_pHyprOpenGL->renderRectWithBlur(&wb, CColor(0, 0, 0, 0), renderdata.dontRound ? 0 : renderdata.rounding - 1, renderdata.fadeAlpha);
+            g_pHyprOpenGL->renderRectWithBlur(&wb, CColor(0, 0, 0, 0), renderdata.dontRound ? 0 : renderdata.rounding - 1, renderdata.fadeAlpha,
+                                              g_pHyprOpenGL->shouldUseNewBlurOptimizations(nullptr, pWindow));
             renderdata.blur = false;
         }
 
@@ -510,37 +511,13 @@ void CHyprRenderer::renderWindow(CWindow* pWindow, CMonitor* pMonitor, timespec*
 
         g_pHyprOpenGL->m_RenderData.useNearestNeighbor = false;
 
-        if (renderdata.decorate && pWindow->m_sSpecialRenderData.border) {
-            auto       grad     = g_pHyprOpenGL->m_pCurrentWindow->m_cRealBorderColor;
-            const bool ANIMATED = g_pHyprOpenGL->m_pCurrentWindow->m_fBorderFadeAnimationProgress.isBeingAnimated();
-            float      a1       = renderdata.fadeAlpha * renderdata.alpha * (ANIMATED ? g_pHyprOpenGL->m_pCurrentWindow->m_fBorderFadeAnimationProgress.fl() : 1.f);
+        if (decorate) {
+            for (auto& wd : pWindow->m_dWindowDecorations) {
+                if (wd->getDecorationLayer() != DECORATION_LAYER_OVER)
+                    continue;
 
-            if (g_pHyprOpenGL->m_pCurrentWindow->m_fBorderAngleAnimationProgress.getConfig()->pValues->internalEnabled) {
-                grad.m_fAngle += g_pHyprOpenGL->m_pCurrentWindow->m_fBorderAngleAnimationProgress.fl() * M_PI * 2;
-                grad.m_fAngle = normalizeAngleRad(grad.m_fAngle);
+                wd->draw(pMonitor, renderdata.alpha * renderdata.fadeAlpha, Vector2D{renderdata.x, renderdata.y} - PREOFFSETPOS);
             }
-
-            CBox windowBox = {renderdata.x - pMonitor->vecPosition.x, renderdata.y - pMonitor->vecPosition.y, renderdata.w, renderdata.h};
-
-            windowBox.scale(pMonitor->scale).round();
-
-            int borderSize = pWindow->m_sSpecialRenderData.borderSize.toUnderlying() == -1 ? *PBORDERSIZE : pWindow->m_sSpecialRenderData.borderSize.toUnderlying();
-            if (pWindow->m_sAdditionalConfigData.borderSize.toUnderlying() != -1)
-                borderSize = pWindow->m_sAdditionalConfigData.borderSize.toUnderlying();
-
-            g_pHyprOpenGL->renderBorder(&windowBox, grad, renderdata.rounding, borderSize, a1);
-
-            if (ANIMATED) {
-                float a2 = renderdata.fadeAlpha * renderdata.alpha * (1.f - g_pHyprOpenGL->m_pCurrentWindow->m_fBorderFadeAnimationProgress.fl());
-                g_pHyprOpenGL->renderBorder(&windowBox, g_pHyprOpenGL->m_pCurrentWindow->m_cRealBorderColorPrevious, renderdata.rounding, borderSize, a2);
-            }
-        }
-
-        for (auto& wd : pWindow->m_dWindowDecorations) {
-            if (wd->getDecorationLayer() != DECORATION_LAYER_OVER)
-                continue;
-
-            wd->draw(pMonitor, renderdata.alpha * renderdata.fadeAlpha, Vector2D{renderdata.x, renderdata.y} - PREOFFSETPOS);
         }
 
         if (TRANSFORMERSPRESENT) {
@@ -578,11 +555,13 @@ void CHyprRenderer::renderWindow(CWindow* pWindow, CMonitor* pMonitor, timespec*
             g_pHyprOpenGL->m_RenderData.useNearestNeighbor = false;
         }
 
-        for (auto& wd : pWindow->m_dWindowDecorations) {
-            if (wd->getDecorationLayer() != DECORATION_LAYER_OVERLAY)
-                continue;
+        if (decorate) {
+            for (auto& wd : pWindow->m_dWindowDecorations) {
+                if (wd->getDecorationLayer() != DECORATION_LAYER_OVERLAY)
+                    continue;
 
-            wd->draw(pMonitor, renderdata.alpha * renderdata.fadeAlpha, Vector2D{renderdata.x, renderdata.y} - PREOFFSETPOS);
+                wd->draw(pMonitor, renderdata.alpha * renderdata.fadeAlpha, Vector2D{renderdata.x, renderdata.y} - PREOFFSETPOS);
+            }
         }
     }
 
@@ -2281,6 +2260,9 @@ CRenderbuffer* CHyprRenderer::getOrCreateRenderbuffer(wlr_buffer* buffer, uint32
 }
 
 void CHyprRenderer::makeEGLCurrent() {
+    if (!g_pCompositor)
+        return;
+
     if (eglGetCurrentContext() != wlr_egl_get_context(g_pCompositor->m_sWLREGL))
         eglMakeCurrent(wlr_egl_get_display(g_pCompositor->m_sWLREGL), EGL_NO_SURFACE, EGL_NO_SURFACE, wlr_egl_get_context(g_pCompositor->m_sWLREGL));
 }

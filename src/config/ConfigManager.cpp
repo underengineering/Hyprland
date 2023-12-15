@@ -48,12 +48,11 @@ CConfigManager::CConfigManager() {
 
 std::string CConfigManager::getConfigDir() {
     static const char* xdgConfigHome = getenv("XDG_CONFIG_HOME");
-    std::string        configPath;
-    if (!xdgConfigHome)
-        configPath = getenv("HOME") + std::string("/.config");
-    else
-        configPath = xdgConfigHome;
-    return configPath;
+
+    if (xdgConfigHome && std::filesystem::path(xdgConfigHome).is_absolute())
+        return xdgConfigHome;
+
+    return getenv("HOME") + std::string("/.config");
 }
 
 std::string CConfigManager::getMainConfigPath() {
@@ -81,6 +80,7 @@ void CConfigManager::setDefaultVars() {
     configValues["general:apply_sens_to_raw"].intValue     = 0;
     configValues["general:border_size"].intValue           = 1;
     configValues["general:no_border_on_floating"].intValue = 0;
+    configValues["general:border_part_of_window"].intValue = 1;
     configValues["general:gaps_in"].intValue               = 5;
     configValues["general:gaps_out"].intValue              = 20;
     configValues["general:gaps_workspaces"].intValue       = 0;
@@ -236,6 +236,7 @@ void CConfigManager::setDefaultVars() {
     configValues["input:scroll_method"].strValue                    = STRVAL_EMPTY;
     configValues["input:scroll_button"].intValue                    = 0;
     configValues["input:scroll_button_lock"].intValue               = 0;
+    configValues["input:scroll_points"].strValue                    = STRVAL_EMPTY;
     configValues["input:touchpad:natural_scroll"].intValue          = 0;
     configValues["input:touchpad:disable_while_typing"].intValue    = 1;
     configValues["input:touchpad:clickfinger_behavior"].intValue    = 0;
@@ -251,6 +252,7 @@ void CConfigManager::setDefaultVars() {
     configValues["input:tablet:output"].strValue                    = STRVAL_EMPTY;
     configValues["input:tablet:region_position"].vecValue           = Vector2D();
     configValues["input:tablet:region_size"].vecValue               = Vector2D();
+    configValues["input:tablet:relative_input"].intValue            = 0;
 
     configValues["binds:pass_mouse_when_bound"].intValue       = 0;
     configValues["binds:scroll_event_delay"].intValue          = 300;
@@ -306,11 +308,13 @@ void CConfigManager::setDeviceDefaultVars(const std::string& dev) {
     cfgValues["scroll_method"].strValue           = STRVAL_EMPTY;
     cfgValues["scroll_button"].intValue           = 0;
     cfgValues["scroll_button_lock"].intValue      = 0;
+    cfgValues["scroll_points"].strValue           = STRVAL_EMPTY;
     cfgValues["transform"].intValue               = 0;
     cfgValues["output"].strValue                  = STRVAL_EMPTY;
     cfgValues["enabled"].intValue                 = 1;          // only for mice / touchpads
     cfgValues["region_position"].vecValue         = Vector2D(); // only for tablets
     cfgValues["region_size"].vecValue             = Vector2D(); // only for tablets
+    cfgValues["relative_input"].intValue          = 0;          // only for tablets
 }
 
 void CConfigManager::setDefaultAnimationVars() {
@@ -1029,9 +1033,10 @@ void CConfigManager::handleWindowRuleV2(const std::string& command, const std::s
     const auto FULLSCREENPOS = VALUE.find("fullscreen:");
     const auto PINNEDPOS     = VALUE.find("pinned:");
     const auto WORKSPACEPOS  = VALUE.find("workspace:");
+    const auto FOCUSPOS      = VALUE.find("focus:");
 
     if (TITLEPOS == std::string::npos && CLASSPOS == std::string::npos && X11POS == std::string::npos && FLOATPOS == std::string::npos && FULLSCREENPOS == std::string::npos &&
-        PINNEDPOS == std::string::npos && WORKSPACEPOS == std::string::npos) {
+        PINNEDPOS == std::string::npos && WORKSPACEPOS == std::string::npos && FOCUSPOS == std::string::npos) {
         Debug::log(ERR, "Invalid rulev2 syntax: {}", VALUE);
         parseError = "Invalid rulev2 syntax: " + VALUE;
         return;
@@ -1055,7 +1060,9 @@ void CConfigManager::handleWindowRuleV2(const std::string& command, const std::s
         if (PINNEDPOS > pos && PINNEDPOS < min)
             min = PINNEDPOS;
         if (WORKSPACEPOS > pos && WORKSPACEPOS < min)
-            min = PINNEDPOS;
+            min = WORKSPACEPOS;
+        if (FOCUSPOS > pos && FOCUSPOS < min)
+            min = FOCUSPOS;
 
         result = result.substr(0, min - pos);
 
@@ -1088,6 +1095,9 @@ void CConfigManager::handleWindowRuleV2(const std::string& command, const std::s
     if (WORKSPACEPOS != std::string::npos)
         rule.szWorkspace = extract(WORKSPACEPOS + 10);
 
+    if (FOCUSPOS != std::string::npos)
+        rule.bFocus = extract(FOCUSPOS + 6) == "1" ? 1 : 0;
+
     if (RULE == "unset") {
         std::erase_if(m_dWindowRules, [&](const SWindowRule& other) {
             if (!other.v2) {
@@ -1112,6 +1122,9 @@ void CConfigManager::handleWindowRuleV2(const std::string& command, const std::s
                     return false;
 
                 if (!rule.szWorkspace.empty() && rule.szWorkspace != other.szWorkspace)
+                    return false;
+
+                if (rule.bFocus != -1 && rule.bFocus != other.bFocus)
                     return false;
 
                 return true;
@@ -1214,6 +1227,20 @@ void CConfigManager::handleWorkspaceRules(const std::string& command, const std:
             wsRule.isPersistent = configStringToInt(rule.substr(delim + 11));
         else if ((delim = rule.find(ruleOnCreatedEmtpy)) != std::string::npos)
             wsRule.onCreatedEmptyRunCmd = cleanCmdForWorkspace(name, rule.substr(delim + ruleOnCreatedEmtpyLen));
+        else if ((delim = rule.find("layoutopt:")) != std::string::npos) {
+            std::string opt = rule.substr(delim + 10);
+            if (!opt.contains(":")) {
+                // invalid
+                Debug::log(ERR, "Invalid workspace rule found: {}", rule);
+                parseError = "Invalid workspace rule found: " + rule;
+                return;
+            }
+
+            std::string val = opt.substr(opt.find(":") + 1);
+            opt             = opt.substr(0, opt.find(":"));
+
+            wsRule.layoutopts[opt] = val;
+        }
     };
 
     size_t      pos = 0;
@@ -1261,7 +1288,12 @@ void CConfigManager::handleSource(const std::string& command, const std::string&
     for (size_t i = 0; i < glob_buf->gl_pathc; i++) {
         auto value = absolutePath(glob_buf->gl_pathv[i], configCurrentPath);
 
-        if (!std::filesystem::exists(value)) {
+        if (!std::filesystem::is_regular_file(value)) {
+            if (std::filesystem::exists(value)) {
+                Debug::log(WARN, "source= skipping non-file {}", value);
+                continue;
+            }
+
             Debug::log(ERR, "source= file doesnt exist");
             parseError = "source file " + value + " doesn't exist!";
             return;
@@ -1568,20 +1600,20 @@ void CConfigManager::loadConfigLoadVars() {
     std::string mainConfigPath = getMainConfigPath();
     Debug::log(LOG, "Using config: {}", mainConfigPath);
     configPaths.push_back(mainConfigPath);
-    std::string configPath = mainConfigPath.substr(0, mainConfigPath.find_last_of('/'));
-    // find_last_of never returns npos since main_config at least has /hypr/
 
-    if (!std::filesystem::is_directory(configPath)) {
-        Debug::log(WARN, "Creating config home directory");
-        try {
-            std::filesystem::create_directories(configPath);
-        } catch (...) {
-            parseError = "Broken config file! (Could not create config directory)";
-            return;
+    if (g_pCompositor->explicitConfigPath.empty() && !std::filesystem::exists(mainConfigPath)) {
+        std::string configPath = std::filesystem::path(mainConfigPath).parent_path();
+
+        if (!std::filesystem::is_directory(configPath)) {
+            Debug::log(WARN, "Creating config home directory");
+            try {
+                std::filesystem::create_directories(configPath);
+            } catch (...) {
+                parseError = "Broken config file! (Could not create config directory)";
+                return;
+            }
         }
-    }
 
-    if (!std::filesystem::exists(mainConfigPath)) {
         Debug::log(WARN, "No config file found; attempting to generate.");
         std::ofstream ofs;
         ofs.open(mainConfigPath, std::ios::trunc);
@@ -1593,9 +1625,15 @@ void CConfigManager::loadConfigLoadVars() {
     ifs.open(mainConfigPath);
 
     if (!ifs.good()) {
-        Debug::log(WARN, "Config reading error. Attempting to generate, backing up old one if exists");
-
         ifs.close();
+
+        if (!g_pCompositor->explicitConfigPath.empty()) {
+            Debug::log(WARN, "Config reading error!");
+            parseError = "Broken config file! (Could not read)";
+            return;
+        }
+
+        Debug::log(WARN, "Config reading error. Attempting to generate, backing up old one if exists");
 
         if (std::filesystem::exists(mainConfigPath))
             std::filesystem::rename(mainConfigPath, mainConfigPath + ".backup");
@@ -1956,6 +1994,11 @@ std::vector<SWindowRule> CConfigManager::getMatchingRules(CWindow* pWindow) {
 
                 if (rule.bPinned != -1) {
                     if (pWindow->m_bPinned != rule.bPinned)
+                        continue;
+                }
+
+                if (rule.bFocus != -1) {
+                    if (rule.bFocus != (g_pCompositor->m_pLastWindow == pWindow))
                         continue;
                 }
 

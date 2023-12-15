@@ -35,6 +35,8 @@ CHyprOpenGLImpl::CHyprOpenGLImpl() {
     loadGLProc(&m_sProc.glEGLImageTargetRenderbufferStorageOES, "glEGLImageTargetRenderbufferStorageOES");
     loadGLProc(&m_sProc.eglDestroyImageKHR, "eglDestroyImageKHR");
 
+    m_sExts.EXT_read_format_bgra = m_szExtensions.contains("GL_EXT_read_format_bgra");
+
 #ifdef USE_TRACY_GPU
 
     loadGLProc(&glQueryCounter, "glQueryCounterEXT");
@@ -581,14 +583,14 @@ void CHyprOpenGLImpl::renderRect(CBox* box, const CColor& col, int round) {
         renderRectWithDamage(box, col, &m_RenderData.damage, round);
 }
 
-void CHyprOpenGLImpl::renderRectWithBlur(CBox* box, const CColor& col, int round, float blurA) {
+void CHyprOpenGLImpl::renderRectWithBlur(CBox* box, const CColor& col, int round, float blurA, bool xray) {
     if (m_RenderData.damage.empty())
         return;
 
     CRegion damage{m_RenderData.damage};
     damage.intersect(*box);
 
-    CFramebuffer* POUTFB = blurMainFramebufferWithDamage(blurA, &damage);
+    CFramebuffer* POUTFB = xray ? &m_RenderData.pCurrentMonData->blurFB : blurMainFramebufferWithDamage(blurA, &damage);
 
     m_RenderData.currentFB->bind();
 
@@ -1205,13 +1207,6 @@ CFramebuffer* CHyprOpenGLImpl::blurMainFramebufferWithDamage(float a, CRegion* o
 }
 
 void CHyprOpenGLImpl::markBlurDirtyForMonitor(CMonitor* pMonitor) {
-    const auto PWORKSPACE  = g_pCompositor->getWorkspaceByID(pMonitor->activeWorkspace);
-    const auto PFULLWINDOW = g_pCompositor->getFullscreenWindowOnWorkspace(pMonitor->activeWorkspace);
-
-    if (PWORKSPACE->m_bHasFullscreenWindow && PWORKSPACE->m_efFullscreenMode == FULLSCREEN_FULL && PFULLWINDOW && !PFULLWINDOW->m_vRealSize.isBeingAnimated() &&
-        PFULLWINDOW->opaque())
-        return;
-
     m_mMonitorRenderResources[pMonitor].blurFBDirty = true;
 }
 
@@ -1221,6 +1216,10 @@ void CHyprOpenGLImpl::preRender(CMonitor* pMonitor) {
     static auto* const PBLUR            = &g_pConfigManager->getConfigValuePtr("decoration:blur:enabled")->intValue;
 
     if (!*PBLURNEWOPTIMIZE || !m_mMonitorRenderResources[pMonitor].blurFBDirty || !*PBLUR)
+        return;
+
+    // ignore if solitary present, nothing to blur
+    if (pMonitor->solitaryClient)
         return;
 
     // check if we need to update the blur fb
@@ -1233,6 +1232,9 @@ void CHyprOpenGLImpl::preRender(CMonitor* pMonitor) {
 
         if (pWindow->m_sAdditionalConfigData.forceNoBlur)
             return false;
+
+        if (pWindow->m_pWLSurface.small() && !pWindow->m_pWLSurface.m_bFillIgnoreSmall)
+            return true;
 
         const auto  PSURFACE = pWindow->m_pWLSurface.wlr();
 
@@ -1895,11 +1897,15 @@ void CHyprOpenGLImpl::renderSplash(cairo_t* const CAIRO, cairo_surface_t* const 
 void CHyprOpenGLImpl::createBGTextureForMonitor(CMonitor* pMonitor) {
     RASSERT(m_RenderData.pMonitor, "Tried to createBGTex without begin()!");
 
+    static auto* const PRENDERTEX      = &g_pConfigManager->getConfigValuePtr("misc:disable_hyprland_logo")->intValue;
     static auto* const PNOSPLASH       = &g_pConfigManager->getConfigValuePtr("misc:disable_splash_rendering")->intValue;
     static auto* const PFORCEHYPRCHAN  = &g_pConfigManager->getConfigValuePtr("misc:force_hypr_chan")->intValue;
     static auto* const PFORCEWALLPAPER = &g_pConfigManager->getConfigValuePtr("misc:force_default_wallpaper")->intValue;
 
     const auto         FORCEWALLPAPER = std::clamp(*PFORCEWALLPAPER, static_cast<int64_t>(-1L), static_cast<int64_t>(2L));
+
+    if (*PRENDERTEX)
+        return;
 
     // release the last tex if exists
     const auto PTEX = &m_mMonitorBGTextures[pMonitor];
@@ -2018,16 +2024,23 @@ void CHyprOpenGLImpl::clearWithTex() {
 void CHyprOpenGLImpl::destroyMonitorResources(CMonitor* pMonitor) {
     g_pHyprRenderer->makeEGLCurrent();
 
-    g_pHyprOpenGL->m_mMonitorRenderResources[pMonitor].mirrorFB.release();
-    g_pHyprOpenGL->m_mMonitorRenderResources[pMonitor].offloadFB.release();
-    g_pHyprOpenGL->m_mMonitorRenderResources[pMonitor].mirrorSwapFB.release();
-    g_pHyprOpenGL->m_mMonitorRenderResources[pMonitor].monitorMirrorFB.release();
-    g_pHyprOpenGL->m_mMonitorRenderResources[pMonitor].blurFB.release();
-    g_pHyprOpenGL->m_mMonitorRenderResources[pMonitor].offMainFB.release();
-    g_pHyprOpenGL->m_mMonitorRenderResources[pMonitor].stencilTex.destroyTexture();
-    g_pHyprOpenGL->m_mMonitorBGTextures[pMonitor].destroyTexture();
-    g_pHyprOpenGL->m_mMonitorRenderResources.erase(pMonitor);
-    g_pHyprOpenGL->m_mMonitorBGTextures.erase(pMonitor);
+    auto RESIT = g_pHyprOpenGL->m_mMonitorRenderResources.find(pMonitor);
+    if (RESIT != g_pHyprOpenGL->m_mMonitorRenderResources.end()) {
+        RESIT->second.mirrorFB.release();
+        RESIT->second.offloadFB.release();
+        RESIT->second.mirrorSwapFB.release();
+        RESIT->second.monitorMirrorFB.release();
+        RESIT->second.blurFB.release();
+        RESIT->second.offMainFB.release();
+        RESIT->second.stencilTex.destroyTexture();
+        g_pHyprOpenGL->m_mMonitorRenderResources.erase(RESIT);
+    }
+
+    auto TEXIT = g_pHyprOpenGL->m_mMonitorBGTextures.find(pMonitor);
+    if (TEXIT != g_pHyprOpenGL->m_mMonitorBGTextures.end()) {
+        TEXIT->second.destroyTexture();
+        g_pHyprOpenGL->m_mMonitorBGTextures.erase(TEXIT);
+    }
 
     Debug::log(LOG, "Monitor {} -> destroyed all render data", pMonitor->szName);
 }
@@ -2065,15 +2078,136 @@ void CHyprOpenGLImpl::setMonitorTransformEnabled(bool enabled) {
     m_bEndFrame = !enabled;
 }
 
+inline const SGLPixelFormat GLES2_FORMATS[] = {
+    {
+        .drmFormat = DRM_FORMAT_ARGB8888,
+        .glFormat  = GL_BGRA_EXT,
+        .glType    = GL_UNSIGNED_BYTE,
+        .withAlpha = true,
+    },
+    {
+        .drmFormat = DRM_FORMAT_XRGB8888,
+        .glFormat  = GL_BGRA_EXT,
+        .glType    = GL_UNSIGNED_BYTE,
+        .withAlpha = false,
+    },
+    {
+        .drmFormat = DRM_FORMAT_XBGR8888,
+        .glFormat  = GL_RGBA,
+        .glType    = GL_UNSIGNED_BYTE,
+        .withAlpha = false,
+    },
+    {
+        .drmFormat = DRM_FORMAT_ABGR8888,
+        .glFormat  = GL_RGBA,
+        .glType    = GL_UNSIGNED_BYTE,
+        .withAlpha = true,
+    },
+    {
+        .drmFormat = DRM_FORMAT_BGR888,
+        .glFormat  = GL_RGB,
+        .glType    = GL_UNSIGNED_BYTE,
+        .withAlpha = false,
+    },
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+    {
+        .drmFormat = DRM_FORMAT_RGBX4444,
+        .glFormat  = GL_RGBA,
+        .glType    = GL_UNSIGNED_SHORT_4_4_4_4,
+        .withAlpha = false,
+    },
+    {
+        .drmFormat = DRM_FORMAT_RGBA4444,
+        .glFormat  = GL_RGBA,
+        .glType    = GL_UNSIGNED_SHORT_4_4_4_4,
+        .withAlpha = true,
+    },
+    {
+        .drmFormat = DRM_FORMAT_RGBX5551,
+        .glFormat  = GL_RGBA,
+        .glType    = GL_UNSIGNED_SHORT_5_5_5_1,
+        .withAlpha = false,
+    },
+    {
+        .drmFormat = DRM_FORMAT_RGBA5551,
+        .glFormat  = GL_RGBA,
+        .glType    = GL_UNSIGNED_SHORT_5_5_5_1,
+        .withAlpha = true,
+    },
+    {
+        .drmFormat = DRM_FORMAT_RGB565,
+        .glFormat  = GL_RGB,
+        .glType    = GL_UNSIGNED_SHORT_5_6_5,
+        .withAlpha = false,
+    },
+    {
+        .drmFormat = DRM_FORMAT_XBGR2101010,
+        .glFormat  = GL_RGBA,
+        .glType    = GL_UNSIGNED_INT_2_10_10_10_REV_EXT,
+        .withAlpha = false,
+    },
+    {
+        .drmFormat = DRM_FORMAT_ABGR2101010,
+        .glFormat  = GL_RGBA,
+        .glType    = GL_UNSIGNED_INT_2_10_10_10_REV_EXT,
+        .withAlpha = true,
+    },
+    {
+        .drmFormat = DRM_FORMAT_XBGR16161616F,
+        .glFormat  = GL_RGBA,
+        .glType    = GL_HALF_FLOAT_OES,
+        .withAlpha = false,
+    },
+    {
+        .drmFormat = DRM_FORMAT_ABGR16161616F,
+        .glFormat  = GL_RGBA,
+        .glType    = GL_HALF_FLOAT_OES,
+        .withAlpha = true,
+    },
+    {
+        .drmFormat        = DRM_FORMAT_XBGR16161616,
+        .glInternalFormat = GL_RGBA16_EXT,
+        .glFormat         = GL_RGBA,
+        .glType           = GL_UNSIGNED_SHORT,
+        .withAlpha        = false,
+    },
+    {
+        .drmFormat        = DRM_FORMAT_ABGR16161616,
+        .glInternalFormat = GL_RGBA16_EXT,
+        .glFormat         = GL_RGBA,
+        .glType           = GL_UNSIGNED_SHORT,
+        .withAlpha        = true,
+    },
+#endif
+};
+
 uint32_t CHyprOpenGLImpl::getPreferredReadFormat(CMonitor* pMonitor) {
-    if (g_pHyprRenderer->isNvidia())
+    GLint glf = -1, glt = -1, as = -1;
+    glGetIntegerv(GL_IMPLEMENTATION_COLOR_READ_FORMAT, &glf);
+    glGetIntegerv(GL_IMPLEMENTATION_COLOR_READ_TYPE, &glt);
+    glGetIntegerv(GL_ALPHA_BITS, &as);
+
+    if (glf == 0 || glt == 0) {
+        glf = drmFormatToGL(pMonitor->drmFormat);
+        glt = glFormatToType(glf);
+    }
+
+    for (auto& fmt : GLES2_FORMATS) {
+        if (fmt.glFormat == glf && fmt.glType == glt && fmt.withAlpha == (as > 0))
+            return fmt.drmFormat;
+    }
+
+    if (m_sExts.EXT_read_format_bgra)
         return DRM_FORMAT_XRGB8888;
 
-    if (pMonitor->drmFormat == DRM_FORMAT_XRGB8888)
-        return DRM_FORMAT_XBGR8888;
-    if (pMonitor->drmFormat == DRM_FORMAT_XBGR8888)
-        return DRM_FORMAT_XRGB8888;
-    if (pMonitor->drmFormat == DRM_FORMAT_XRGB2101010 || pMonitor->drmFormat == DRM_FORMAT_XBGR2101010)
-        return DRM_FORMAT_XBGR2101010;
-    return DRM_FORMAT_INVALID;
+    return DRM_FORMAT_XBGR8888;
+}
+
+const SGLPixelFormat* CHyprOpenGLImpl::getPixelFormatFromDRM(uint32_t drmFormat) {
+    for (auto& fmt : GLES2_FORMATS) {
+        if (fmt.drmFormat == drmFormat)
+            return &fmt;
+    }
+
+    return nullptr;
 }

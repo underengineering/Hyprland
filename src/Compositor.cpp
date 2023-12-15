@@ -339,7 +339,8 @@ void CCompositor::cleanup() {
 
     removeLockFile();
 
-    m_bIsShuttingDown = true;
+    m_bIsShuttingDown   = true;
+    Debug::shuttingDown = true;
 
 #ifdef USES_SYSTEMD
     if (sd_booted() > 0)
@@ -701,26 +702,29 @@ CWindow* CCompositor::vectorToWindowIdeal(const Vector2D& pos, CWindow* pIgnoreW
             }
         }
 
+        const int64_t WORKSPACEID = special ? PMONITOR->specialWorkspaceID : PMONITOR->activeWorkspace;
+        const auto    PWORKSPACE  = getWorkspaceByID(WORKSPACEID);
+
+        if (PWORKSPACE->m_bHasFullscreenWindow)
+            return getFullscreenWindowOnWorkspace(PWORKSPACE->m_iID);
+
         // for windows, we need to check their extensions too, first.
         for (auto& w : m_vWindows) {
             if (special != isWorkspaceSpecial(w->m_iWorkspaceID))
                 continue;
 
-            const int64_t WORKSPACEID = special ? PMONITOR->specialWorkspaceID : PMONITOR->activeWorkspace;
-
             if (!w->m_bIsX11 && !w->m_bIsFloating && w->m_bIsMapped && w->m_iWorkspaceID == WORKSPACEID && !w->isHidden() && !w->m_bX11ShouldntFocus && !w->m_bNoFocus &&
                 w.get() != pIgnoreWindow) {
-                if ((w)->hasPopupAt(pos))
+                if (w->hasPopupAt(pos))
                     return w.get();
             }
         }
+
         for (auto& w : m_vWindows) {
             if (special != isWorkspaceSpecial(w->m_iWorkspaceID))
                 continue;
 
-            const int64_t WORKSPACEID = special ? PMONITOR->specialWorkspaceID : PMONITOR->activeWorkspace;
-
-            CBox          box = {w->m_vPosition.x, w->m_vPosition.y, w->m_vSize.x, w->m_vSize.y};
+            CBox box = {w->m_vPosition, w->m_vSize};
             if (!w->m_bIsFloating && w->m_bIsMapped && box.containsPoint(pos) && w->m_iWorkspaceID == WORKSPACEID && !w->isHidden() && !w->m_bX11ShouldntFocus && !w->m_bNoFocus &&
                 w.get() != pIgnoreWindow)
                 return w.get();
@@ -939,6 +943,8 @@ void CCompositor::focusWindow(CWindow* pWindow, wlr_surface* pSurface) {
 
     // we need to make the PLASTWINDOW not equal to m_pLastWindow so that RENDERDATA is correct for an unfocused window
     if (windowValidMapped(PLASTWINDOW)) {
+        PLASTWINDOW->updateDynamicRules();
+
         updateWindowAnimatedDecorationValues(PLASTWINDOW);
 
         if (!pWindow->m_bIsX11 || pWindow->m_iX11Type == 1)
@@ -955,6 +961,8 @@ void CCompositor::focusWindow(CWindow* pWindow, wlr_surface* pSurface) {
     focusSurface(PWINDOWSURFACE, pWindow);
 
     g_pXWaylandManager->activateWindow(pWindow, true); // sets the m_pLastWindow
+
+    pWindow->updateDynamicRules();
 
     updateWindowAnimatedDecorationValues(pWindow);
 
@@ -1392,14 +1400,11 @@ void CCompositor::cleanupFadingOut(const int& monid) {
             if (valid && !w->m_bReadyToDelete)
                 continue;
 
-            std::erase_if(g_pHyprOpenGL->m_mWindowFramebuffers, [&](const auto& other) { return other.first == w; });
             w->m_bFadingOut = false;
             removeWindowFromVectorSafe(w);
             std::erase(m_vWindowsFadingOut, w);
 
             Debug::log(LOG, "Cleanup: destroyed a window");
-
-            glFlush(); // to free mem NOW.
             return;
         }
     }
@@ -1441,9 +1446,6 @@ void CCompositor::cleanupFadingOut(const int& monid) {
             g_pHyprOpenGL->markBlurDirtyForMonitor(getMonitorFromID(monid));
 
         if (ls->fadingOut && ls->readyToDelete && !ls->alpha.isBeingAnimated()) {
-            g_pHyprOpenGL->m_mLayerFramebuffers[ls].release();
-            g_pHyprOpenGL->m_mLayerFramebuffers.erase(ls);
-
             for (auto& m : m_vMonitors) {
                 for (auto& lsl : m->m_aLayerSurfaceLayers) {
                     if (!lsl.empty() && std::find_if(lsl.begin(), lsl.end(), [&](std::unique_ptr<SLayerSurface>& other) { return other.get() == ls; }) != lsl.end()) {
@@ -1987,7 +1989,7 @@ void CCompositor::swapActiveWorkspaces(CMonitor* pMonitorA, CMonitor* pMonitorB)
     updateFullscreenFadeOnWorkspace(PWORKSPACEB);
     updateFullscreenFadeOnWorkspace(PWORKSPACEA);
 
-    g_pInputManager->simulateMouseMovement();
+    g_pInputManager->sendMotionEventsToFocused();
 
     // event
     g_pEventManager->postEvent(SHyprIPCEvent{"moveworkspace", PWORKSPACEA->m_szName + "," + pMonitorB->szName});
@@ -2172,7 +2174,7 @@ void CCompositor::moveWorkspaceToMonitor(CWorkspace* pWorkspace, CMonitor* pMoni
 
         wlr_cursor_warp(m_sWLRCursor, nullptr, pMonitor->vecPosition.x + pMonitor->vecTransformedSize.x / 2, pMonitor->vecPosition.y + pMonitor->vecTransformedSize.y / 2);
 
-        g_pInputManager->simulateMouseMovement();
+        g_pInputManager->sendMotionEventsToFocused();
     }
 
     // finalize
@@ -2255,7 +2257,7 @@ void CCompositor::setWindowFullscreen(CWindow* pWindow, bool on, eFullscreenMode
 
     g_pLayoutManager->getCurrentLayout()->fullscreenRequestForWindow(pWindow, MODE, on);
 
-    g_pXWaylandManager->setWindowFullscreen(pWindow, pWindow->m_bIsFullscreen && MODE == FULLSCREEN_FULL);
+    g_pXWaylandManager->setWindowFullscreen(pWindow, pWindow->shouldSendFullscreenState());
 
     pWindow->updateDynamicRules();
     updateWindowAnimatedDecorationValues(pWindow);

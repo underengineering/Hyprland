@@ -506,14 +506,6 @@ void Events::listener_mapWindow(void* owner, void* data) {
                                                                "XWayland Window Late");
     }
 
-    // do the animation thing
-    g_pAnimationManager->onWindowPostCreateClose(PWINDOW, false);
-    PWINDOW->m_fAlpha.setValueAndWarp(0.f);
-    PWINDOW->m_fAlpha = 1.f;
-
-    PWINDOW->m_vRealPosition.setCallbackOnEnd(setAnimToMove);
-    PWINDOW->m_vRealSize.setCallbackOnEnd(setAnimToMove);
-
     if ((requestsFullscreen && (!PWINDOW->m_bNoFullscreenRequest || overridingNoFullscreen)) || (requestsMaximize && (!PWINDOW->m_bNoMaximizeRequest || overridingNoMaximize)) ||
         requestsFakeFullscreen) {
         // fix fullscreen on requested (basically do a switcheroo)
@@ -627,6 +619,19 @@ void Events::listener_mapWindow(void* owner, void* data) {
     g_pEventManager->postEvent(SHyprIPCEvent{"openwindow", std::format("{:x},{},{},{}", PWINDOW, workspaceID, g_pXWaylandManager->getAppIDClass(PWINDOW), PWINDOW->m_szTitle)});
     EMIT_HOOK_EVENT("openWindow", PWINDOW);
 
+    // apply data from default decos. Borders, shadows.
+    g_pDecorationPositioner->forceRecalcFor(PWINDOW);
+    PWINDOW->updateWindowDecos();
+    g_pLayoutManager->getCurrentLayout()->recalculateWindow(PWINDOW);
+
+    // do animations
+    g_pAnimationManager->onWindowPostCreateClose(PWINDOW, false);
+    PWINDOW->m_fAlpha.setValueAndWarp(0.f);
+    PWINDOW->m_fAlpha = 1.f;
+
+    PWINDOW->m_vRealPosition.setCallbackOnEnd(setAnimToMove);
+    PWINDOW->m_vRealSize.setCallbackOnEnd(setAnimToMove);
+
     // recalc the values for this window
     g_pCompositor->updateWindowAnimatedDecorationValues(PWINDOW);
     // avoid this window being visible
@@ -636,8 +641,7 @@ void Events::listener_mapWindow(void* owner, void* data) {
     g_pCompositor->setPreferredScaleForSurface(PWINDOW->m_pWLSurface.wlr(), PMONITOR->scale);
     g_pCompositor->setPreferredTransformForSurface(PWINDOW->m_pWLSurface.wlr(), PMONITOR->transform);
 
-    if (g_pCompositor->vectorToWindowIdeal(g_pInputManager->getMouseCoordsInternal()) == g_pCompositor->m_pLastWindow)
-        g_pInputManager->simulateMouseMovement();
+    g_pInputManager->sendMotionEventsToFocused();
 
     // fix some xwayland apps that don't behave nicely
     PWINDOW->m_vReportedSize = PWINDOW->m_vPendingReportedSize;
@@ -732,8 +736,7 @@ void Events::listener_unmapWindow(void* owner, void* data) {
         if (PWINDOWCANDIDATE != g_pCompositor->m_pLastWindow && PWINDOWCANDIDATE)
             g_pCompositor->focusWindow(PWINDOWCANDIDATE);
 
-        if (g_pCompositor->vectorToWindowIdeal(g_pInputManager->getMouseCoordsInternal()) == PWINDOWCANDIDATE)
-            g_pInputManager->simulateMouseMovement();
+        g_pInputManager->sendMotionEventsToFocused();
 
         // CWindow::onUnmap will remove this window's active status, but we can't really do it above.
         if (PWINDOW == g_pCompositor->m_pLastWindow || !g_pCompositor->m_pLastWindow) {
@@ -811,22 +814,29 @@ void Events::listener_commitWindow(void* owner, void* data) {
     if (PWINDOW->m_bIsX11 || !PWINDOW->m_bIsFloating || PWINDOW->m_bIsFullscreen)
         return;
 
-    const auto ISRIGID = PWINDOW->m_uSurface.xdg->toplevel->current.max_height == PWINDOW->m_uSurface.xdg->toplevel->current.min_height &&
-        PWINDOW->m_uSurface.xdg->toplevel->current.max_width == PWINDOW->m_uSurface.xdg->toplevel->current.min_width;
+    const auto MINSIZE = Vector2D{PWINDOW->m_uSurface.xdg->toplevel->current.min_width, PWINDOW->m_uSurface.xdg->toplevel->current.min_height};
+    const auto MAXSIZE = Vector2D{PWINDOW->m_uSurface.xdg->toplevel->current.max_width, PWINDOW->m_uSurface.xdg->toplevel->current.max_height};
 
-    if (!ISRIGID)
+    if (MAXSIZE < Vector2D{1, 1})
         return;
 
-    const Vector2D REQUESTEDSIZE = {PWINDOW->m_uSurface.xdg->toplevel->current.max_width, PWINDOW->m_uSurface.xdg->toplevel->current.max_height};
+    const auto REALSIZE = PWINDOW->m_vRealSize.goalv();
+    Vector2D   newSize  = REALSIZE;
 
-    if (REQUESTEDSIZE == PWINDOW->m_vReportedSize || REQUESTEDSIZE.x < 5 || REQUESTEDSIZE.y < 5)
-        return;
+    if (MAXSIZE.x < newSize.x)
+        newSize.x = MAXSIZE.x;
+    if (MAXSIZE.y < newSize.y)
+        newSize.y = MAXSIZE.y;
+    if (MINSIZE.x > newSize.x)
+        newSize.x = MINSIZE.x;
+    if (MINSIZE.y > newSize.y)
+        newSize.y = MINSIZE.y;
 
-    const Vector2D DELTA = PWINDOW->m_vReportedSize - REQUESTEDSIZE;
+    const Vector2D DELTA = REALSIZE - newSize;
 
     PWINDOW->m_vRealPosition = PWINDOW->m_vRealPosition.goalv() + DELTA / 2.0;
-    PWINDOW->m_vRealSize     = REQUESTEDSIZE;
-    g_pXWaylandManager->setWindowSize(PWINDOW, REQUESTEDSIZE, true);
+    PWINDOW->m_vRealSize     = newSize;
+    g_pXWaylandManager->setWindowSize(PWINDOW, newSize, true);
     g_pHyprRenderer->damageWindow(PWINDOW);
 }
 
@@ -1057,6 +1067,13 @@ void Events::listener_configureX11(void* owner, void* data) {
 
     wlr_xwayland_surface_configure(PWINDOW->m_uSurface.xwayland, E->x, E->y, E->width, E->height);
 
+    PWINDOW->m_vReportedSize = {E->width, E->height};
+
+    PWINDOW->updateWindowDecos();
+
+    if (!g_pCompositor->isWorkspaceVisible(PWINDOW->m_iWorkspaceID))
+        return; // further things are only for visible windows
+
     PWINDOW->m_iWorkspaceID = g_pCompositor->getMonitorFromVector(PWINDOW->m_vRealPosition.vec() + PWINDOW->m_vRealSize.vec() / 2.f)->activeWorkspace;
 
     g_pCompositor->changeWindowZOrder(PWINDOW, true);
@@ -1067,10 +1084,6 @@ void Events::listener_configureX11(void* owner, void* data) {
         g_pInputManager->refocus();
 
     g_pHyprRenderer->damageWindow(PWINDOW);
-
-    PWINDOW->updateWindowDecos();
-
-    PWINDOW->m_vReportedSize = {E->width, E->height};
 }
 
 void Events::listener_unmanagedSetGeometry(void* owner, void* data) {

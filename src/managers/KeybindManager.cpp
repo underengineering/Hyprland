@@ -800,9 +800,13 @@ void CKeybindManager::changeworkspace(std::string args) {
     static auto* const PALLOWWORKSPACECYCLES = &g_pConfigManager->getConfigValuePtr("binds:allow_workspace_cycles")->intValue;
     static auto* const PWORKSPACECENTERON    = &g_pConfigManager->getConfigValuePtr("binds:workspace_center_on")->intValue;
 
-    const auto         PMONITOR          = g_pCompositor->m_pLastMonitor;
-    const auto         PCURRENTWORKSPACE = g_pCompositor->getWorkspaceByID(PMONITOR->activeWorkspace);
-    const bool         EXPLICITPREVIOUS  = args.starts_with("previous");
+    const auto         PMONITOR = g_pCompositor->m_pLastMonitor;
+
+    if (!PMONITOR)
+        return;
+
+    const auto PCURRENTWORKSPACE = g_pCompositor->getWorkspaceByID(PMONITOR->activeWorkspace);
+    const bool EXPLICITPREVIOUS  = args.starts_with("previous");
 
     if (args.starts_with("previous")) {
         // Do nothing if there's no previous workspace, otherwise switch to it.
@@ -1914,8 +1918,7 @@ void CKeybindManager::fakeFullscreenActive(std::string args) {
     if (g_pCompositor->m_pLastWindow) {
         // will also set the flag
         g_pCompositor->m_pLastWindow->m_bFakeFullscreenState = !g_pCompositor->m_pLastWindow->m_bFakeFullscreenState;
-        g_pXWaylandManager->setWindowFullscreen(g_pCompositor->m_pLastWindow,
-                                                g_pCompositor->m_pLastWindow->m_bFakeFullscreenState || g_pCompositor->m_pLastWindow->m_bIsFullscreen);
+        g_pXWaylandManager->setWindowFullscreen(g_pCompositor->m_pLastWindow, g_pCompositor->m_pLastWindow->shouldSendFullscreenState());
     }
 }
 

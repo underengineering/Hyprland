@@ -210,6 +210,7 @@ void CScreencopyProtocolManager::captureOutput(wl_client* client, wl_resource* r
     PFRAME->client = PCLIENT;
     PCLIENT->ref++;
 
+    g_pHyprRenderer->makeEGLCurrent();
     PFRAME->shmFormat = g_pHyprOpenGL->getPreferredReadFormat(PFRAME->pMonitor);
     if (PFRAME->shmFormat == DRM_FORMAT_INVALID) {
         Debug::log(ERR, "No format supported by renderer in capture output");
@@ -241,7 +242,7 @@ void CScreencopyProtocolManager::captureOutput(wl_client* client, wl_resource* r
     wlr_output_effective_resolution(PFRAME->pMonitor->output, &ow, &oh);
     PFRAME->box.transform(PFRAME->pMonitor->transform, ow, oh).scale(PFRAME->pMonitor->scale).round();
 
-    PFRAME->shmStride = (PSHMINFO->bpp / 8) * PFRAME->box.width;
+    PFRAME->shmStride = pixel_format_info_min_stride(PSHMINFO, PFRAME->box.w);
 
     zwlr_screencopy_frame_v1_send_buffer(PFRAME->resource, convert_drm_format_to_wl_shm(PFRAME->shmFormat), PFRAME->box.width, PFRAME->box.height, PFRAME->shmStride);
 
@@ -441,7 +442,7 @@ bool CScreencopyProtocolManager::copyFrameShm(SScreencopyFrame* frame, timespec*
     g_pHyprRenderer->makeEGLCurrent();
 
     CFramebuffer fb;
-    fb.alloc(frame->box.w, frame->box.h, frame->pMonitor->drmFormat);
+    fb.alloc(frame->box.w, frame->box.h, g_pHyprRenderer->isNvidia() ? DRM_FORMAT_XBGR8888 : frame->pMonitor->drmFormat);
 
     if (!g_pHyprRenderer->beginRender(frame->pMonitor, fakeDamage, RENDER_MODE_FULL_FAKE, nullptr, &fb)) {
         wlr_texture_destroy(sourceTex);
@@ -449,15 +450,24 @@ bool CScreencopyProtocolManager::copyFrameShm(SScreencopyFrame* frame, timespec*
         return false;
     }
 
-    CBox monbox = CBox{0, 0, frame->pMonitor->vecPixelSize.x, frame->pMonitor->vecPixelSize.y}.translate({-frame->box.x, -frame->box.y});
+    CBox monbox = CBox{0, 0, frame->pMonitor->vecTransformedSize.x, frame->pMonitor->vecTransformedSize.y}.translate({-frame->box.x, -frame->box.y});
     g_pHyprOpenGL->setMonitorTransformEnabled(false);
     g_pHyprOpenGL->renderTexture(sourceTex, &monbox, 1);
     g_pHyprOpenGL->setMonitorTransformEnabled(true);
 
+#ifndef GLES2
     glBindFramebuffer(GL_READ_FRAMEBUFFER, fb.m_iFb);
+#else
+    glBindFramebuffer(GL_FRAMEBUFFER, fb.m_iFb);
+#endif
 
-    const auto GLFORMAT = drmFormatToGL(frame->pMonitor->drmFormat);
-    const auto GLTYPE   = glFormatToType(GLFORMAT);
+    const auto PFORMAT = g_pHyprOpenGL->getPixelFormatFromDRM(format);
+    if (!PFORMAT) {
+        g_pHyprRenderer->endRender();
+        wlr_texture_destroy(sourceTex);
+        wlr_buffer_end_data_ptr_access(frame->buffer);
+        return false;
+    }
 
     g_pHyprRenderer->endRender();
 
@@ -465,7 +475,19 @@ bool CScreencopyProtocolManager::copyFrameShm(SScreencopyFrame* frame, timespec*
     g_pHyprOpenGL->m_RenderData.pMonitor = frame->pMonitor;
     fb.bind();
 
-    glReadPixels(0, 0, frame->box.w, frame->box.h, GL_RGBA, GLTYPE, data);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+
+    const wlr_pixel_format_info* drmFmtWlr  = drm_get_pixel_format_info(format);
+    uint32_t                     packStride = pixel_format_info_min_stride(drmFmtWlr, frame->box.w);
+
+    if (packStride == stride) {
+        glReadPixels(0, 0, frame->box.w, frame->box.h, PFORMAT->glFormat, PFORMAT->glType, data);
+    } else {
+        for (size_t i = 0; i < frame->box.h; ++i) {
+            uint32_t y = i;
+            glReadPixels(0, y, frame->box.w, 1, PFORMAT->glFormat, PFORMAT->glType, ((unsigned char*)data) + i * stride);
+        }
+    }
 
     g_pHyprOpenGL->m_RenderData.pMonitor = nullptr;
 
