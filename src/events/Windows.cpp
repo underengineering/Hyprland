@@ -52,7 +52,6 @@ void Events::listener_mapWindow(void* owner, void* data) {
     const auto         PWORKSPACE =
         PMONITOR->specialWorkspaceID ? g_pCompositor->getWorkspaceByID(PMONITOR->specialWorkspaceID) : g_pCompositor->getWorkspaceByID(PMONITOR->activeWorkspace);
     PWINDOW->m_iMonitorID     = PMONITOR->ID;
-    PWINDOW->m_bMappedX11     = true;
     PWINDOW->m_iWorkspaceID   = PMONITOR->specialWorkspaceID ? PMONITOR->specialWorkspaceID : PMONITOR->activeWorkspace;
     PWINDOW->m_bIsMapped      = true;
     PWINDOW->m_bReadyToDelete = false;
@@ -479,7 +478,6 @@ void Events::listener_mapWindow(void* owner, void* data) {
     Debug::log(LOG, "Window got assigned a surfaceTreeNode {:x}", (uintptr_t)PWINDOW->m_pSurfaceTree);
 
     if (!PWINDOW->m_bIsX11) {
-        PWINDOW->hyprListener_commitWindow.initCallback(&PWINDOW->m_uSurface.xdg->surface->events.commit, &Events::listener_commitWindow, PWINDOW, "XDG Window Late");
         PWINDOW->hyprListener_setTitleWindow.initCallback(&PWINDOW->m_uSurface.xdg->toplevel->events.set_title, &Events::listener_setTitleWindow, PWINDOW, "XDG Window Late");
         PWINDOW->hyprListener_newPopupXDG.initCallback(&PWINDOW->m_uSurface.xdg->events.new_popup, &Events::listener_newPopupXDG, PWINDOW, "XDG Window Late");
         PWINDOW->hyprListener_requestMaximize.initCallback(&PWINDOW->m_uSurface.xdg->toplevel->events.request_maximize, &Events::listener_requestMaximize, PWINDOW,
@@ -645,6 +643,8 @@ void Events::listener_mapWindow(void* owner, void* data) {
 
     // fix some xwayland apps that don't behave nicely
     PWINDOW->m_vReportedSize = PWINDOW->m_vPendingReportedSize;
+
+    g_pCompositor->updateWorkspaceWindows(PWINDOW->m_iWorkspaceID);
 }
 
 void Events::listener_unmapWindow(void* owner, void* data) {
@@ -672,7 +672,6 @@ void Events::listener_unmapWindow(void* owner, void* data) {
 
     if (!PWINDOW->m_bIsX11) {
         Debug::log(LOG, "Unregistered late callbacks XDG");
-        PWINDOW->hyprListener_commitWindow.removeCallback();
         PWINDOW->hyprListener_setTitleWindow.removeCallback();
         PWINDOW->hyprListener_newPopupXDG.removeCallback();
         PWINDOW->hyprListener_requestMaximize.removeCallback();
@@ -713,8 +712,6 @@ void Events::listener_unmapWindow(void* owner, void* data) {
 
         g_pInputManager->releaseAllMouseButtons();
     }
-
-    PWINDOW->m_bMappedX11 = false;
 
     // remove the fullscreen window status from workspace if we closed it
     const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(PWINDOW->m_iWorkspaceID);
@@ -796,7 +793,7 @@ void Events::listener_ackConfigure(void* owner, void* data) {
 void Events::listener_commitWindow(void* owner, void* data) {
     CWindow* PWINDOW = (CWindow*)owner;
 
-    if (!PWINDOW->m_bMappedX11 || PWINDOW->isHidden() || (PWINDOW->m_bIsX11 && !PWINDOW->m_bMappedX11))
+    if (!PWINDOW->m_bIsMapped || PWINDOW->isHidden())
         return;
 
     if (PWINDOW->m_bIsX11)
@@ -853,6 +850,7 @@ void Events::listener_destroyWindow(void* owner, void* data) {
         g_pCompositor->m_pLastFocus  = nullptr;
     }
 
+    PWINDOW->hyprListener_commitWindow.removeCallback();
     PWINDOW->hyprListener_mapWindow.removeCallback();
     PWINDOW->hyprListener_unmapWindow.removeCallback();
     PWINDOW->hyprListener_destroyWindow.removeCallback();
@@ -1028,9 +1026,10 @@ void Events::listener_configureX11(void* owner, void* data) {
 
     const auto E = (wlr_xwayland_surface_configure_event*)data;
 
-    if (!PWINDOW->m_uSurface.xwayland->surface || !PWINDOW->m_uSurface.xwayland->surface->mapped || !PWINDOW->m_bMappedX11) {
+    if (!PWINDOW->m_uSurface.xwayland->surface || !PWINDOW->m_uSurface.xwayland->surface->mapped || !PWINDOW->m_bIsMapped) {
         wlr_xwayland_surface_configure(PWINDOW->m_uSurface.xwayland, E->x, E->y, E->width, E->height);
-        PWINDOW->m_vReportedSize = {E->width, E->height};
+        PWINDOW->m_vPendingReportedSize = {E->width, E->height};
+        PWINDOW->m_vReportedSize        = {E->width, E->height};
         return;
     }
 
@@ -1067,7 +1066,8 @@ void Events::listener_configureX11(void* owner, void* data) {
 
     wlr_xwayland_surface_configure(PWINDOW->m_uSurface.xwayland, E->x, E->y, E->width, E->height);
 
-    PWINDOW->m_vReportedSize = {E->width, E->height};
+    PWINDOW->m_vPendingReportedSize = {E->width, E->height};
+    PWINDOW->m_vReportedSize        = {E->width, E->height};
 
     PWINDOW->updateWindowDecos();
 
@@ -1089,7 +1089,7 @@ void Events::listener_configureX11(void* owner, void* data) {
 void Events::listener_unmanagedSetGeometry(void* owner, void* data) {
     CWindow* PWINDOW = (CWindow*)owner;
 
-    if (!PWINDOW->m_bMappedX11)
+    if (!PWINDOW->m_bIsMapped)
         return;
 
     const auto POS = PWINDOW->m_vRealPosition.goalv();
@@ -1137,6 +1137,10 @@ void Events::listener_unmanagedSetGeometry(void* owner, void* data) {
         g_pCompositor->changeWindowZOrder(PWINDOW, true);
         PWINDOW->updateWindowDecos();
         g_pHyprRenderer->damageWindow(PWINDOW);
+
+        PWINDOW->m_vReportedPosition    = PWINDOW->m_vRealPosition.goalv();
+        PWINDOW->m_vReportedSize        = PWINDOW->m_vRealSize.goalv();
+        PWINDOW->m_vPendingReportedSize = PWINDOW->m_vReportedSize;
     }
 }
 
@@ -1152,12 +1156,14 @@ void Events::listener_associateX11(void* owner, void* data) {
     const auto PWINDOW = (CWindow*)owner;
 
     PWINDOW->hyprListener_mapWindow.initCallback(&PWINDOW->m_uSurface.xwayland->surface->events.map, &Events::listener_mapWindow, PWINDOW, "XWayland Window");
+    PWINDOW->hyprListener_commitWindow.initCallback(&PWINDOW->m_uSurface.xwayland->surface->events.commit, &Events::listener_commitWindow, PWINDOW, "XWayland Window");
 }
 
 void Events::listener_dissociateX11(void* owner, void* data) {
     const auto PWINDOW = (CWindow*)owner;
 
     PWINDOW->hyprListener_mapWindow.removeCallback();
+    PWINDOW->hyprListener_commitWindow.removeCallback();
 }
 
 void Events::listener_surfaceXWayland(wl_listener* listener, void* data) {
@@ -1194,6 +1200,7 @@ void Events::listener_newXDGToplevel(wl_listener* listener, void* data) {
 
     PNEWWINDOW->hyprListener_mapWindow.initCallback(&XDGSURFACE->surface->events.map, &Events::listener_mapWindow, PNEWWINDOW, "XDG Window");
     PNEWWINDOW->hyprListener_destroyWindow.initCallback(&XDGSURFACE->events.destroy, &Events::listener_destroyWindow, PNEWWINDOW, "XDG Window");
+    PNEWWINDOW->hyprListener_commitWindow.initCallback(&XDGSURFACE->surface->events.commit, &Events::listener_commitWindow, PNEWWINDOW, "XDG Window");
 }
 
 void Events::listener_NewXDGDeco(wl_listener* listener, void* data) {
@@ -1216,7 +1223,7 @@ void Events::listener_requestMaximize(void* owner, void* data) {
 
         wlr_xdg_surface_schedule_configure(PWINDOW->m_uSurface.xdg);
     } else {
-        if (!PWINDOW->m_bMappedX11 || PWINDOW->m_iX11Type != 1)
+        if (!PWINDOW->m_bIsMapped || PWINDOW->m_iX11Type != 1)
             return;
 
         g_pCompositor->setWindowFullscreen(PWINDOW, !PWINDOW->m_bIsFullscreen, FULLSCREEN_MAXIMIZED);
@@ -1229,7 +1236,7 @@ void Events::listener_requestMinimize(void* owner, void* data) {
     Debug::log(LOG, "Minimize request for {}", PWINDOW);
 
     if (PWINDOW->m_bIsX11) {
-        if (!PWINDOW->m_bMappedX11 || PWINDOW->m_iX11Type != 1)
+        if (!PWINDOW->m_bIsMapped || PWINDOW->m_iX11Type != 1)
             return;
 
         const auto E = (wlr_xwayland_minimize_event*)data;

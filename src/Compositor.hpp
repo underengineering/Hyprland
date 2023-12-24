@@ -172,6 +172,7 @@ class CCompositor {
     CWindow*       getConstraintWindow(SMouse*);
     CMonitor*      getMonitorInDirection(const char&);
     void           updateAllWindowsAnimatedDecorationValues();
+    void           updateWorkspaceWindows(const int64_t& id);
     void           updateWindowAnimatedDecorationValues(CWindow*);
     int            getNextAvailableMonitorID(std::string const& name);
     void           moveWorkspaceToMonitor(CWorkspace*, CMonitor*);
@@ -207,6 +208,7 @@ class CCompositor {
     void           leaveUnsafeState();
     void           setPreferredScaleForSurface(wlr_surface* pSurface, double scale);
     void           setPreferredTransformForSurface(wlr_surface* pSurface, wl_output_transform transform);
+    void           updateSuspendedStates();
 
     std::string    explicitConfigPath;
 

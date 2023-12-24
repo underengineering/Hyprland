@@ -75,7 +75,8 @@ void CHyprDropShadowDecoration::draw(CMonitor* pMonitor, float a, const Vector2D
     if (*PSHADOWS != 1)
         return; // disabled
 
-    const auto ROUNDING        = m_pWindow->rounding() + m_pWindow->getRealBorderSize();
+    const auto ROUNDINGBASE    = m_pWindow->rounding();
+    const auto ROUNDING        = ROUNDINGBASE > 0 ? ROUNDINGBASE + m_pWindow->getRealBorderSize() : 0;
     const auto PWORKSPACE      = g_pCompositor->getWorkspaceByID(m_pWindow->m_iWorkspaceID);
     const auto WORKSPACEOFFSET = PWORKSPACE && !m_pWindow->m_bPinned ? PWORKSPACE->m_vRenderOffset.vec() : Vector2D();
 
@@ -119,10 +120,12 @@ void CHyprDropShadowDecoration::draw(CMonitor* pMonitor, float a, const Vector2D
         windowBox.translate(-pMonitor->vecPosition + WORKSPACEOFFSET);
         withDecos.translate(-pMonitor->vecPosition + WORKSPACEOFFSET);
 
-        auto extentss = withDecos.extentsFrom(windowBox);
+        auto scaledExtentss = withDecos.extentsFrom(windowBox);
+        scaledExtentss      = scaledExtentss * pMonitor->scale;
+        scaledExtentss      = scaledExtentss.round();
 
         // add extents
-        windowBox.addExtents(extentss).scale(pMonitor->scale).round();
+        windowBox.scale(pMonitor->scale).round().addExtents(scaledExtentss);
 
         if (windowBox.width < 1 || windowBox.height < 1)
             return; // prevent assert failed

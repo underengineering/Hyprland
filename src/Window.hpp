@@ -151,12 +151,13 @@ struct SWindowRule {
     bool        v2 = false;
     std::string szTitle;
     std::string szClass;
-    int         bX11        = -1; // -1 means "ANY"
-    int         bFloating   = -1;
-    int         bFullscreen = -1;
-    int         bPinned     = -1;
-    int         bFocus      = -1;
-    std::string szWorkspace = ""; // empty means any
+    int         bX11         = -1; // -1 means "ANY"
+    int         bFloating    = -1;
+    int         bFullscreen  = -1;
+    int         bPinned      = -1;
+    int         bFocus       = -1;
+    int         iOnWorkspace = -1;
+    std::string szWorkspace  = ""; // empty means any
 };
 
 class CWindow {
@@ -238,7 +239,6 @@ class CWindow {
 
     // XWayland stuff
     bool     m_bIsX11                = false;
-    bool     m_bMappedX11            = false;
     CWindow* m_pX11Parent            = nullptr;
     uint64_t m_iX11Type              = 0;
     bool     m_bIsModal              = false;
@@ -367,6 +367,7 @@ class CWindow {
     float                    rounding();
     bool                     canBeTorn();
     bool                     shouldSendFullscreenState();
+    void                     setSuspended(bool suspend);
 
     int                      getRealBorderSize();
     void                     updateSpecialRenderData();
@@ -392,7 +393,8 @@ class CWindow {
 
   private:
     // For hidden windows and stuff
-    bool m_bHidden = false;
+    bool m_bHidden    = false;
+    bool m_bSuspended = false;
 };
 
 /**

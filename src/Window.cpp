@@ -231,7 +231,7 @@ pid_t CWindow::getPID() {
 
         wl_client_get_credentials(wl_resource_get_client(m_uSurface.xdg->resource), &PID, nullptr, nullptr);
     } else {
-        if (!m_bIsMapped || !m_bMappedX11)
+        if (!m_bIsMapped)
             return -1;
 
         PID = m_uSurface.xwayland->pid;
@@ -322,7 +322,7 @@ void sendLeaveIter(wlr_surface* pSurface, int x, int y, void* data) {
 }
 
 void CWindow::updateSurfaceOutputs() {
-    if (m_iLastSurfaceMonitorID == m_iMonitorID || !m_bIsMapped || m_bHidden || !m_bMappedX11)
+    if (m_iLastSurfaceMonitorID == m_iMonitorID || !m_bIsMapped || m_bHidden)
         return;
 
     const auto PLASTMONITOR = g_pCompositor->getMonitorFromID(m_iLastSurfaceMonitorID);
@@ -448,6 +448,8 @@ void CWindow::onUnmap() {
 
     if (PMONITOR && PMONITOR->solitaryClient == this)
         PMONITOR->solitaryClient = nullptr;
+
+    g_pCompositor->updateWorkspaceWindows(m_iWorkspaceID);
 }
 
 void CWindow::onMap() {
@@ -509,6 +511,8 @@ void CWindow::setHidden(bool hidden) {
     if (hidden && g_pCompositor->m_pLastWindow == this) {
         g_pCompositor->m_pLastWindow = nullptr;
     }
+
+    setSuspended(hidden);
 }
 
 bool CWindow::isHidden() {
@@ -1004,4 +1008,14 @@ bool CWindow::canBeTorn() {
 bool CWindow::shouldSendFullscreenState() {
     const auto MODE = g_pCompositor->getWorkspaceByID(m_iWorkspaceID)->m_efFullscreenMode;
     return m_bFakeFullscreenState || (m_bIsFullscreen && (MODE == FULLSCREEN_FULL));
+}
+
+void CWindow::setSuspended(bool suspend) {
+    if (suspend == m_bSuspended)
+        return;
+
+    if (m_bIsX11)
+        return;
+
+    wlr_xdg_toplevel_set_suspended(m_uSurface.xdg->toplevel, suspend);
 }

@@ -9,9 +9,7 @@ extern "C" {
 }
 
 CHyprRenderer::CHyprRenderer() {
-    const auto ENV = getenv("WLR_DRM_NO_ATOMIC");
-
-    if (ENV && std::string(ENV) == "1")
+    if (envEnabled("WLR_DRM_NO_ATOMIC"))
         m_bTearingEnvSatisfied = true;
 
     if (g_pCompositor->m_sWLRSession) {
@@ -51,7 +49,7 @@ CHyprRenderer::CHyprRenderer() {
         Debug::log(WARN, "NVIDIA detected, please remember to follow nvidia instructions on the wiki");
 }
 
-void renderSurface(struct wlr_surface* surface, int x, int y, void* data) {
+static void renderSurface(struct wlr_surface* surface, int x, int y, void* data) {
     const auto TEXTURE = wlr_surface_get_texture(surface);
     const auto RDATA   = (SRenderData*)data;
 
@@ -687,10 +685,14 @@ void CHyprRenderer::renderAllClientsForWorkspace(CMonitor* pMonitor, CWorkspace*
     // pre window pass
     g_pHyprOpenGL->preWindowPass();
 
+    setOccludedForMainWorkspace(g_pHyprOpenGL->m_RenderData.damage, pWorkspace);
+
     if (pWorkspace->m_bHasFullscreenWindow)
         renderWorkspaceWindowsFullscreen(pMonitor, pWorkspace, time);
     else
         renderWorkspaceWindows(pMonitor, pWorkspace, time);
+
+    g_pHyprOpenGL->m_RenderData.damage = preOccludedDamage;
 
     g_pHyprOpenGL->m_RenderData.renderModif = {};
 
@@ -1348,7 +1350,7 @@ void CHyprRenderer::outputMgrApplyTest(wlr_output_configuration_v1* config, bool
 
 // taken from Sway.
 // this is just too much of a spaghetti for me to understand
-void apply_exclusive(struct wlr_box* usable_area, uint32_t anchor, int32_t exclusive, int32_t margin_top, int32_t margin_right, int32_t margin_bottom, int32_t margin_left) {
+static void applyExclusive(wlr_box& usableArea, uint32_t anchor, int32_t exclusive, int32_t marginTop, int32_t marginRight, int32_t marginBottom, int32_t marginLeft) {
     if (exclusive <= 0) {
         return;
     }
@@ -1363,33 +1365,33 @@ void apply_exclusive(struct wlr_box* usable_area, uint32_t anchor, int32_t exclu
         {
             .singular_anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP,
             .anchor_triplet  = ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT | ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT | ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP,
-            .positive_axis   = &usable_area->y,
-            .negative_axis   = &usable_area->height,
-            .margin          = margin_top,
+            .positive_axis   = &usableArea.y,
+            .negative_axis   = &usableArea.height,
+            .margin          = marginTop,
         },
         // Bottom
         {
             .singular_anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM,
             .anchor_triplet  = ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT | ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT | ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM,
             .positive_axis   = NULL,
-            .negative_axis   = &usable_area->height,
-            .margin          = margin_bottom,
+            .negative_axis   = &usableArea.height,
+            .margin          = marginBottom,
         },
         // Left
         {
             .singular_anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT,
             .anchor_triplet  = ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT | ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP | ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM,
-            .positive_axis   = &usable_area->x,
-            .negative_axis   = &usable_area->width,
-            .margin          = margin_left,
+            .positive_axis   = &usableArea.x,
+            .negative_axis   = &usableArea.width,
+            .margin          = marginLeft,
         },
         // Right
         {
             .singular_anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT,
             .anchor_triplet  = ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT | ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP | ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM,
             .positive_axis   = NULL,
-            .negative_axis   = &usable_area->width,
-            .margin          = margin_right,
+            .negative_axis   = &usableArea.width,
+            .margin          = marginRight,
         },
     };
     for (size_t i = 0; i < sizeof(edges) / sizeof(edges[0]); ++i) {
@@ -1480,7 +1482,7 @@ void CHyprRenderer::arrangeLayerArray(CMonitor* pMonitor, const std::vector<std:
         // Apply
         ls->geometry = box;
 
-        apply_exclusive(usableArea->pWlr(), PSTATE->anchor, PSTATE->exclusive_zone, PSTATE->margin.top, PSTATE->margin.right, PSTATE->margin.bottom, PSTATE->margin.left);
+        applyExclusive(*usableArea->pWlr(), PSTATE->anchor, PSTATE->exclusive_zone, PSTATE->margin.top, PSTATE->margin.right, PSTATE->margin.bottom, PSTATE->margin.left);
 
         usableArea->applyFromWlr();
 
@@ -1681,6 +1683,8 @@ DAMAGETRACKINGMODES CHyprRenderer::damageTrackingModeFromStr(const std::string& 
 
 bool CHyprRenderer::applyMonitorRule(CMonitor* pMonitor, SMonitorRule* pMonitorRule, bool force) {
 
+    static auto* const PDISABLESCALECHECKS = &g_pConfigManager->getConfigValuePtr("debug:disable_scale_checks")->intValue;
+
     Debug::log(LOG, "Applying monitor rule for {}", pMonitor->szName);
 
     pMonitor->activeMonitorRule = *pMonitorRule;
@@ -1706,7 +1710,7 @@ bool CHyprRenderer::applyMonitorRule(CMonitor* pMonitor, SMonitorRule* pMonitorR
     // Check if the rule isn't already applied
     // TODO: clean this up lol
     if (!force && DELTALESSTHAN(pMonitor->vecPixelSize.x, pMonitorRule->resolution.x, 1) && DELTALESSTHAN(pMonitor->vecPixelSize.y, pMonitorRule->resolution.y, 1) &&
-        DELTALESSTHAN(pMonitor->refreshRate, pMonitorRule->refreshRate, 1) && pMonitor->scale == pMonitorRule->scale &&
+        DELTALESSTHAN(pMonitor->refreshRate, pMonitorRule->refreshRate, 1) && pMonitor->setScale == pMonitorRule->scale &&
         ((DELTALESSTHAN(pMonitor->vecPosition.x, pMonitorRule->offset.x, 1) && DELTALESSTHAN(pMonitor->vecPosition.y, pMonitorRule->offset.y, 1)) ||
          pMonitorRule->offset == Vector2D(-INT32_MAX, -INT32_MAX)) &&
         pMonitor->transform == pMonitorRule->transform && pMonitorRule->enable10bit == pMonitor->enabled10bit &&
@@ -1720,13 +1724,14 @@ bool CHyprRenderer::applyMonitorRule(CMonitor* pMonitor, SMonitorRule* pMonitorR
     pMonitor->customDrmMode = {};
 
     if (pMonitorRule->scale > 0.1) {
-        wlr_output_set_scale(pMonitor->output, pMonitorRule->scale);
         pMonitor->scale = pMonitorRule->scale;
     } else {
         const auto DEFAULTSCALE = pMonitor->getDefaultScale();
-        wlr_output_set_scale(pMonitor->output, DEFAULTSCALE);
-        pMonitor->scale = DEFAULTSCALE;
+        pMonitor->scale         = DEFAULTSCALE;
     }
+
+    wlr_output_set_scale(pMonitor->output, pMonitor->scale);
+    pMonitor->setScale = pMonitor->scale;
 
     wlr_output_set_transform(pMonitor->output, pMonitorRule->transform);
     pMonitor->transform = pMonitorRule->transform;
@@ -1944,6 +1949,54 @@ bool CHyprRenderer::applyMonitorRule(CMonitor* pMonitor, SMonitorRule* pMonitorR
 
     pMonitor->vecPixelSize = pMonitor->vecSize;
 
+    Vector2D logicalSize = pMonitor->vecPixelSize / pMonitor->scale;
+    if (!*PDISABLESCALECHECKS && (logicalSize.x != std::round(logicalSize.x) || logicalSize.y != std::round(logicalSize.y))) {
+        // invalid scale, will produce fractional pixels.
+        // find the nearest valid.
+
+        float    searchScale = std::round(pMonitor->scale * 360.0);
+        bool     found       = false;
+
+        double   scaleZero = searchScale / 360.0;
+
+        Vector2D logicalZero = pMonitor->vecPixelSize / scaleZero;
+        if (logicalZero == logicalZero.round()) {
+            pMonitor->scale = scaleZero;
+        } else {
+            for (size_t i = 1; i < 90; ++i) {
+                double   scaleUp   = (searchScale + i) / 360.0;
+                double   scaleDown = (searchScale - i) / 360.0;
+
+                Vector2D logicalUp   = pMonitor->vecPixelSize / scaleUp;
+                Vector2D logicalDown = pMonitor->vecPixelSize / scaleDown;
+
+                if (logicalUp == logicalUp.round()) {
+                    found       = true;
+                    searchScale = scaleUp;
+                    break;
+                }
+                if (logicalDown == logicalDown.round()) {
+                    found       = true;
+                    searchScale = scaleDown;
+                    break;
+                }
+            }
+
+            if (!found) {
+                Debug::log(ERR, "Invalid scale passed to monitor, {} failed to find a clean divisor", pMonitor->scale);
+                g_pConfigManager->addParseError("Invalid scale passed to monitor " + pMonitor->szName + ", failed to find a clean divisor");
+            } else {
+                Debug::log(ERR, "Invalid scale passed to monitor, {} found suggestion {}", pMonitor->scale, searchScale);
+                g_pConfigManager->addParseError(
+                    std::format("Invalid scale passed to monitor {}, failed to find a clean divisor. Suggested nearest scale: {:4f}", pMonitor->szName, searchScale));
+            }
+
+            pMonitor->scale = pMonitor->getDefaultScale();
+        }
+    }
+
+    wlr_output_set_scale(pMonitor->output, pMonitor->scale);
+
     // clang-format off
     static const std::array<std::vector<std::pair<std::string, uint32_t>>, 2> formats{
         std::vector<std::pair<std::string, uint32_t>>{ /* 10-bit */
@@ -2020,21 +2073,24 @@ bool CHyprRenderer::applyMonitorRule(CMonitor* pMonitor, SMonitorRule* pMonitorR
     return true;
 }
 
-void CHyprRenderer::setCursorSurface(wlr_surface* surf, int hotspotX, int hotspotY) {
+void CHyprRenderer::setCursorSurface(wlr_surface* surf, int hotspotX, int hotspotY, bool force) {
     m_bCursorHasSurface = surf;
 
-    if (surf == m_sLastCursorData.surf)
+    if ((surf == m_sLastCursorData.surf || m_bCursorHidden) && !force)
         return;
 
-    m_sLastCursorData.name = "";
-    m_sLastCursorData.surf = surf;
+    m_sLastCursorData.name     = "";
+    m_sLastCursorData.surf     = surf;
+    m_sLastCursorData.hotspotX = hotspotX;
+    m_sLastCursorData.hotspotY = hotspotY;
 
     wlr_cursor_set_surface(g_pCompositor->m_sWLRCursor, surf, hotspotX, hotspotY);
 }
-void CHyprRenderer::setCursorFromName(const std::string& name) {
+
+void CHyprRenderer::setCursorFromName(const std::string& name, bool force) {
     m_bCursorHasSurface = true;
 
-    if (name == m_sLastCursorData.name)
+    if ((name == m_sLastCursorData.name || m_bCursorHidden) && !force)
         return;
 
     m_sLastCursorData.name = name;
@@ -2052,33 +2108,49 @@ void CHyprRenderer::ensureCursorRenderingMode() {
     if (*PCURSORTIMEOUT > 0 || *PHIDEONTOUCH) {
         const bool HIDE = (*PCURSORTIMEOUT > 0 && *PCURSORTIMEOUT < PASSEDCURSORSECONDS) || (g_pInputManager->m_bLastInputTouch && *PHIDEONTOUCH);
 
-        if (HIDE && m_bHasARenderedCursor) {
-            m_bHasARenderedCursor = false;
-
-            setCursorSurface(nullptr, 0, 0); // hide
-
+        if (HIDE && !m_bCursorHidden) {
             Debug::log(LOG, "Hiding the cursor (timeout)");
 
             for (auto& m : g_pCompositor->m_vMonitors)
                 g_pHyprRenderer->damageMonitor(m.get()); // TODO: maybe just damage the cursor area?
-        } else if (!HIDE && !m_bHasARenderedCursor) {
-            m_bHasARenderedCursor = true;
 
-            if (!m_bWindowRequestedCursorHide)
-                setCursorFromName("left_ptr");
+            setCursorHidden(true);
 
+        } else if (!HIDE && m_bCursorHidden) {
             Debug::log(LOG, "Showing the cursor (timeout)");
 
             for (auto& m : g_pCompositor->m_vMonitors)
                 g_pHyprRenderer->damageMonitor(m.get()); // TODO: maybe just damage the cursor area?
+
+            setCursorHidden(false);
         }
     } else {
-        m_bHasARenderedCursor = true;
+        setCursorHidden(false);
     }
 }
 
+void CHyprRenderer::setCursorHidden(bool hide) {
+
+    if (hide == m_bCursorHidden)
+        return;
+
+    m_bCursorHidden = hide;
+
+    if (hide) {
+        wlr_cursor_unset_image(g_pCompositor->m_sWLRCursor);
+        return;
+    }
+
+    if (m_sLastCursorData.surf.has_value())
+        setCursorSurface(m_sLastCursorData.surf.value(), m_sLastCursorData.hotspotX, m_sLastCursorData.hotspotY, true);
+    else if (!m_sLastCursorData.name.empty())
+        setCursorFromName(m_sLastCursorData.name, true);
+    else
+        setCursorFromName("left_ptr", true);
+}
+
 bool CHyprRenderer::shouldRenderCursor() {
-    return m_bHasARenderedCursor && m_bCursorHasSurface;
+    return !m_bCursorHidden && !m_bWindowRequestedCursorHide && m_bCursorHasSurface;
 }
 
 std::tuple<float, float, float> CHyprRenderer::getRenderTimes(CMonitor* pMonitor) {
@@ -2126,6 +2198,35 @@ void CHyprRenderer::initiateManualCrash() {
     g_pHyprOpenGL->m_tGlobalTimer.reset();
 
     g_pConfigManager->setInt("debug:damage_tracking", 0);
+}
+
+void CHyprRenderer::setOccludedForMainWorkspace(CRegion& region, CWorkspace* pWorkspace) {
+    CRegion    rg;
+
+    const auto PMONITOR = g_pCompositor->getMonitorFromID(pWorkspace->m_iMonitorID);
+
+    if (!PMONITOR->specialWorkspaceID)
+        return;
+
+    for (auto& w : g_pCompositor->m_vWindows) {
+        if (!w->m_bIsMapped || w->isHidden() || w->m_iWorkspaceID != PMONITOR->specialWorkspaceID)
+            continue;
+
+        if (!w->opaque())
+            continue;
+
+        const auto     ROUNDING = w->rounding() * PMONITOR->scale;
+        const Vector2D POS      = w->m_vRealPosition.vec() + Vector2D{ROUNDING, ROUNDING} - PMONITOR->vecPosition + (w->m_bPinned ? Vector2D{} : pWorkspace->m_vRenderOffset.vec());
+        const Vector2D SIZE     = w->m_vRealSize.vec() - Vector2D{ROUNDING * 2, ROUNDING * 2};
+
+        CBox           box = {POS.x, POS.y, SIZE.x, SIZE.y};
+
+        box.scale(PMONITOR->scale);
+
+        rg.add(box);
+    }
+
+    region.subtract(rg);
 }
 
 void CHyprRenderer::setOccludedForBackLayers(CRegion& region, CWorkspace* pWorkspace) {
