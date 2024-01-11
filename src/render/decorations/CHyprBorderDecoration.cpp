@@ -99,6 +99,10 @@ uint64_t CHyprBorderDecoration::getDecorationFlags() {
     return *PPARTOFWINDOW && !doesntWantBorders() ? DECORATION_PART_OF_MAIN_WINDOW : 0;
 }
 
+std::string CHyprBorderDecoration::getDisplayName() {
+    return "Border";
+}
+
 bool CHyprBorderDecoration::doesntWantBorders() {
-    return !m_pWindow->m_sSpecialRenderData.border || m_pWindow->m_bX11DoesntWantBorders;
+    return !m_pWindow->m_sSpecialRenderData.border || m_pWindow->m_bX11DoesntWantBorders || m_pWindow->getRealBorderSize() == 0;
 }

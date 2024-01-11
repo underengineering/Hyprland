@@ -50,8 +50,12 @@ CHyprRenderer::CHyprRenderer() {
 }
 
 static void renderSurface(struct wlr_surface* surface, int x, int y, void* data) {
-    const auto TEXTURE = wlr_surface_get_texture(surface);
-    const auto RDATA   = (SRenderData*)data;
+    static auto* const PBLURPOPUPS            = &g_pConfigManager->getConfigValuePtr("decoration:blur:popups")->intValue;
+    static auto* const PBLURPOPUPSIGNOREALPHA = &g_pConfigManager->getConfigValuePtr("decoration:blur:popups_ignorealpha")->floatValue;
+
+    const auto         TEXTURE                     = wlr_surface_get_texture(surface);
+    const auto         RDATA                       = (SRenderData*)data;
+    const auto         INTERACTIVERESIZEINPROGRESS = RDATA->pWindow && g_pInputManager->currentlyDraggedWindow == RDATA->pWindow && g_pInputManager->dragMode == MBIND_RESIZE;
 
     if (!TEXTURE)
         return;
@@ -69,9 +73,8 @@ static void renderSurface(struct wlr_surface* surface, int x, int y, void* data)
         auto* const PSURFACE = CWLSurface::surfaceFromWlr(surface);
 
         if (PSURFACE && !PSURFACE->m_bFillIgnoreSmall && PSURFACE->small() /* guarantees m_pOwner */) {
-            const auto CORRECT                     = PSURFACE->correctSmallVec();
-            const auto SIZE                        = PSURFACE->getViewporterCorrectedSize();
-            const auto INTERACTIVERESIZEINPROGRESS = g_pInputManager->currentlyDraggedWindow == PSURFACE->m_pOwner && g_pInputManager->dragMode == MBIND_RESIZE;
+            const auto CORRECT = PSURFACE->correctSmallVec();
+            const auto SIZE    = PSURFACE->getViewporterCorrectedSize();
 
             if (!INTERACTIVERESIZEINPROGRESS) {
                 windowBox.x += CORRECT.x;
@@ -109,6 +112,16 @@ static void renderSurface(struct wlr_surface* surface, int x, int y, void* data)
     windowBox.scale(RDATA->pMonitor->scale);
     windowBox.round();
 
+    // check for fractional scale surfaces misaligning the buffer size
+    // in those cases it's better to just force nearest neighbor
+    // as long as the window is not animated. During those it'd look weird
+    const auto NEARESTNEIGHBORSET = g_pHyprOpenGL->m_RenderData.useNearestNeighbor;
+    if (std::floor(RDATA->pMonitor->scale) != RDATA->pMonitor->scale /* Fractional */ && surface->current.scale == 1 /* fs protocol */ &&
+        windowBox.size() != Vector2D{surface->current.buffer_width, surface->current.buffer_height} /* misaligned */ &&
+        DELTALESSTHAN(windowBox.width, surface->current.buffer_width, 3) && DELTALESSTHAN(windowBox.height, surface->current.buffer_height, 3) /* off by one-or-two */ &&
+        (!RDATA->pWindow || (!RDATA->pWindow->m_vRealSize.isBeingAnimated() && !INTERACTIVERESIZEINPROGRESS)) /* not window or not animated/resizing */)
+        g_pHyprOpenGL->m_RenderData.useNearestNeighbor = true;
+
     float rounding = RDATA->rounding;
 
     rounding -= 1; // to fix a border issue
@@ -134,19 +147,30 @@ static void renderSurface(struct wlr_surface* surface, int x, int y, void* data)
                 g_pHyprOpenGL->renderTexture(TEXTURE, &windowBox, RDATA->fadeAlpha * RDATA->alpha, rounding, true);
         }
     } else {
-        g_pHyprOpenGL->renderTexture(TEXTURE, &windowBox, RDATA->fadeAlpha * RDATA->alpha, rounding, true);
+        if (RDATA->blur && RDATA->popup && *PBLURPOPUPS) {
+
+            if (*PBLURPOPUPSIGNOREALPHA != 1.f) {
+                g_pHyprOpenGL->m_RenderData.discardMode |= DISCARD_ALPHA;
+                g_pHyprOpenGL->m_RenderData.discardOpacity = *PBLURPOPUPSIGNOREALPHA;
+            }
+
+            g_pHyprOpenGL->renderTextureWithBlur(TEXTURE, &windowBox, RDATA->fadeAlpha * RDATA->alpha, surface, rounding, true);
+            g_pHyprOpenGL->m_RenderData.discardMode &= ~DISCARD_ALPHA;
+        } else
+            g_pHyprOpenGL->renderTexture(TEXTURE, &windowBox, RDATA->fadeAlpha * RDATA->alpha, rounding, true);
     }
 
     if (!g_pHyprRenderer->m_bBlockSurfaceFeedback) {
         wlr_surface_send_frame_done(surface, RDATA->when);
-        wlr_presentation_surface_textured_on_output(g_pCompositor->m_sWLRPresentation, surface, RDATA->pMonitor->output);
+        wlr_presentation_surface_textured_on_output(surface, RDATA->pMonitor->output);
     }
 
     g_pHyprOpenGL->blend(true);
 
-    // reset the UV, we might've set it above
+    // reset props
     g_pHyprOpenGL->m_RenderData.primarySurfaceUVTopLeft     = Vector2D(-1, -1);
     g_pHyprOpenGL->m_RenderData.primarySurfaceUVBottomRight = Vector2D(-1, -1);
+    g_pHyprOpenGL->m_RenderData.useNearestNeighbor          = NEARESTNEIGHBORSET;
 }
 
 bool CHyprRenderer::shouldRenderWindow(CWindow* pWindow, CMonitor* pMonitor, CWorkspace* pWorkspace) {
@@ -266,10 +290,13 @@ void CHyprRenderer::renderWorkspaceWindowsFullscreen(CMonitor* pMonitor, CWorksp
                 continue;
         }
 
-        if (w->m_iWorkspaceID != pMonitor->activeWorkspace || !w->m_bIsFullscreen)
+        if (!w->m_bIsFullscreen)
             continue;
 
         renderWindow(w.get(), pMonitor, time, pWorkspace->m_efFullscreenMode != FULLSCREEN_FULL, RENDER_PASS_ALL);
+
+        if (w->m_iWorkspaceID != pWorkspace->m_iID)
+            continue;
 
         pWorkspaceWindow = w.get();
     }
@@ -429,7 +456,7 @@ void CHyprRenderer::renderWindow(CWindow* pWindow, CMonitor* pMonitor, timespec*
 
     // clip box for animated offsets
     const Vector2D PREOFFSETPOS = {renderdata.x, renderdata.y};
-    if (!ignorePosition && pWindow->m_bIsFloating && !pWindow->m_bPinned) {
+    if (!ignorePosition && pWindow->m_bIsFloating && !pWindow->m_bPinned && !pWindow->m_bIsFullscreen) {
         Vector2D offset;
 
         if (PWORKSPACE->m_vRenderOffset.vec().x != 0) {
@@ -544,6 +571,7 @@ void CHyprRenderer::renderWindow(CWindow* pWindow, CMonitor* pMonitor, timespec*
             renderdata.dontRound       = true; // don't round popups
             renderdata.pMonitor        = pMonitor;
             renderdata.squishOversized = false; // don't squish popups
+            renderdata.popup           = true;
 
             if (pWindow->m_sAdditionalConfigData.nearestNeighbor.toUnderlying())
                 g_pHyprOpenGL->m_RenderData.useNearestNeighbor = true;
@@ -597,6 +625,7 @@ void CHyprRenderer::renderLayer(SLayerSurface* pLayer, CMonitor* pMonitor, times
 
     renderdata.squishOversized = false; // don't squish popups
     renderdata.dontRound       = true;
+    renderdata.popup           = true;
     wlr_layer_surface_v1_for_each_popup_surface(pLayer->layerSurface, renderSurface, &renderdata);
 
     g_pHyprOpenGL->m_pCurrentLayer = nullptr;
@@ -627,13 +656,17 @@ void CHyprRenderer::renderSessionLockSurface(SSessionLockSurface* pSurface, CMon
 }
 
 void CHyprRenderer::renderAllClientsForWorkspace(CMonitor* pMonitor, CWorkspace* pWorkspace, timespec* time, const Vector2D& translate, const float& scale) {
-    static auto* const     PDIMSPECIAL      = &g_pConfigManager->getConfigValuePtr("decoration:dim_special")->floatValue;
-    static auto* const     PBLURSPECIAL     = &g_pConfigManager->getConfigValuePtr("decoration:blur:special")->intValue;
-    static auto* const     PBLUR            = &g_pConfigManager->getConfigValuePtr("decoration:blur:enabled")->intValue;
-    static auto* const     PRENDERTEX       = &g_pConfigManager->getConfigValuePtr("misc:disable_hyprland_logo")->intValue;
-    static auto* const     PBACKGROUNDCOLOR = &g_pConfigManager->getConfigValuePtr("misc:background_color")->intValue;
+    static auto* const PDIMSPECIAL      = &g_pConfigManager->getConfigValuePtr("decoration:dim_special")->floatValue;
+    static auto* const PBLURSPECIAL     = &g_pConfigManager->getConfigValuePtr("decoration:blur:special")->intValue;
+    static auto* const PBLUR            = &g_pConfigManager->getConfigValuePtr("decoration:blur:enabled")->intValue;
+    static auto* const PRENDERTEX       = &g_pConfigManager->getConfigValuePtr("misc:disable_hyprland_logo")->intValue;
+    static auto* const PBACKGROUNDCOLOR = &g_pConfigManager->getConfigValuePtr("misc:background_color")->intValue;
 
-    const SRenderModifData RENDERMODIFDATA = {translate, scale};
+    SRenderModifData   RENDERMODIFDATA;
+    if (translate != Vector2D{0, 0})
+        RENDERMODIFDATA.modifs.push_back({SRenderModifData::eRenderModifType::RMOD_TYPE_TRANSLATE, translate});
+    if (scale != 1.f)
+        RENDERMODIFDATA.modifs.push_back({SRenderModifData::eRenderModifType::RMOD_TYPE_SCALE, scale});
 
     if (!pMonitor)
         return;
@@ -880,7 +913,7 @@ bool CHyprRenderer::attemptDirectScanout(CMonitor* pMonitor) {
     timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
     wlr_surface_send_frame_done(PSURFACE, &now);
-    wlr_presentation_surface_scanned_out_on_output(g_pCompositor->m_sWLRPresentation, PSURFACE, pMonitor->output);
+    wlr_presentation_surface_scanned_out_on_output(PSURFACE, pMonitor->output);
 
     if (wlr_output_commit(pMonitor->output)) {
         if (!m_pLastScanout) {
@@ -1722,10 +1755,12 @@ bool CHyprRenderer::applyMonitorRule(CMonitor* pMonitor, SMonitorRule* pMonitorR
 
     // Needed in case we are switching from a custom modeline to a standard mode
     pMonitor->customDrmMode = {};
+    bool autoScale          = false;
 
     if (pMonitorRule->scale > 0.1) {
         pMonitor->scale = pMonitorRule->scale;
     } else {
+        autoScale               = true;
         const auto DEFAULTSCALE = pMonitor->getDefaultScale();
         pMonitor->scale         = DEFAULTSCALE;
     }
@@ -1954,18 +1989,19 @@ bool CHyprRenderer::applyMonitorRule(CMonitor* pMonitor, SMonitorRule* pMonitorR
         // invalid scale, will produce fractional pixels.
         // find the nearest valid.
 
-        float    searchScale = std::round(pMonitor->scale * 360.0);
+        float    searchScale = std::round(pMonitor->scale * 120.0);
         bool     found       = false;
 
-        double   scaleZero = searchScale / 360.0;
+        double   scaleZero = searchScale / 120.0;
 
         Vector2D logicalZero = pMonitor->vecPixelSize / scaleZero;
         if (logicalZero == logicalZero.round()) {
             pMonitor->scale = scaleZero;
+            wlr_output_set_scale(pMonitor->output, pMonitor->scale);
         } else {
             for (size_t i = 1; i < 90; ++i) {
-                double   scaleUp   = (searchScale + i) / 360.0;
-                double   scaleDown = (searchScale - i) / 360.0;
+                double   scaleUp   = (searchScale + i) / 120.0;
+                double   scaleDown = (searchScale - i) / 120.0;
 
                 Vector2D logicalUp   = pMonitor->vecPixelSize / scaleUp;
                 Vector2D logicalDown = pMonitor->vecPixelSize / scaleDown;
@@ -1983,19 +2019,30 @@ bool CHyprRenderer::applyMonitorRule(CMonitor* pMonitor, SMonitorRule* pMonitorR
             }
 
             if (!found) {
-                Debug::log(ERR, "Invalid scale passed to monitor, {} failed to find a clean divisor", pMonitor->scale);
-                g_pConfigManager->addParseError("Invalid scale passed to monitor " + pMonitor->szName + ", failed to find a clean divisor");
+                if (autoScale)
+                    pMonitor->scale = std::round(scaleZero);
+                else {
+                    Debug::log(ERR, "Invalid scale passed to monitor, {} failed to find a clean divisor", pMonitor->scale);
+                    g_pConfigManager->addParseError("Invalid scale passed to monitor " + pMonitor->szName + ", failed to find a clean divisor");
+                    pMonitor->scale = pMonitor->getDefaultScale();
+                }
             } else {
-                Debug::log(ERR, "Invalid scale passed to monitor, {} found suggestion {}", pMonitor->scale, searchScale);
-                g_pConfigManager->addParseError(
-                    std::format("Invalid scale passed to monitor {}, failed to find a clean divisor. Suggested nearest scale: {:4f}", pMonitor->szName, searchScale));
+                if (!autoScale) {
+                    Debug::log(ERR, "Invalid scale passed to monitor, {} found suggestion {}", pMonitor->scale, searchScale);
+                    g_pConfigManager->addParseError(
+                        std::format("Invalid scale passed to monitor {}, failed to find a clean divisor. Suggested nearest scale: {:5f}", pMonitor->szName, searchScale));
+                    pMonitor->scale = pMonitor->getDefaultScale();
+                } else
+                    pMonitor->scale = searchScale;
             }
 
-            pMonitor->scale = pMonitor->getDefaultScale();
+            // for wlroots, that likes flooring, we have to do this.
+            double logicalX = std::round(pMonitor->vecPixelSize.x / pMonitor->scale);
+            logicalX += 0.1;
+
+            wlr_output_set_scale(pMonitor->output, pMonitor->vecPixelSize.x / logicalX);
         }
     }
-
-    wlr_output_set_scale(pMonitor->output, pMonitor->scale);
 
     // clang-format off
     static const std::array<std::vector<std::pair<std::string, uint32_t>>, 2> formats{
@@ -2150,7 +2197,7 @@ void CHyprRenderer::setCursorHidden(bool hide) {
 }
 
 bool CHyprRenderer::shouldRenderCursor() {
-    return !m_bCursorHidden && !m_bWindowRequestedCursorHide && m_bCursorHasSurface;
+    return !m_bCursorHidden && m_bCursorHasSurface;
 }
 
 std::tuple<float, float, float> CHyprRenderer::getRenderTimes(CMonitor* pMonitor) {
@@ -2412,7 +2459,8 @@ bool CHyprRenderer::beginRender(CMonitor* pMonitor, CRegion& damage, eRenderMode
 }
 
 void CHyprRenderer::endRender() {
-    const auto PMONITOR = g_pHyprOpenGL->m_RenderData.pMonitor;
+    const auto         PMONITOR           = g_pHyprOpenGL->m_RenderData.pMonitor;
+    static auto* const PNVIDIAANTIFLICKER = &g_pConfigManager->getConfigValuePtr("opengl:nvidia_anti_flicker")->intValue;
 
     if (m_eRenderMode != RENDER_MODE_TO_BUFFER_READ_ONLY)
         g_pHyprOpenGL->end();
@@ -2425,7 +2473,7 @@ void CHyprRenderer::endRender() {
     if (m_eRenderMode == RENDER_MODE_FULL_FAKE)
         return;
 
-    if (isNvidia())
+    if (isNvidia() && *PNVIDIAANTIFLICKER)
         glFinish();
     else
         glFlush();

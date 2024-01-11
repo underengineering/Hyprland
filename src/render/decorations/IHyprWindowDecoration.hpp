@@ -1,5 +1,6 @@
 #pragma once
 
+#include <any>
 #include "../../defines.hpp"
 #include "../../helpers/Region.hpp"
 #include "DecorationPositioner.hpp"
@@ -46,15 +47,13 @@ class IHyprWindowDecoration {
 
     virtual void                       damageEntire() = 0; // should be ignored by non-absolute decos
 
-    virtual void                       onBeginWindowDragOnDeco(const Vector2D&); // called when the user calls the "movewindow" mouse dispatcher on the deco
-
-    virtual bool                       onEndWindowDragOnDeco(CWindow* pDraggedWindow, const Vector2D&); // returns true if the window should be placed by the layout
-
-    virtual void                       onMouseButtonOnDeco(const Vector2D&, wlr_pointer_button_event*);
+    virtual bool                       onInputOnDeco(const eInputType, const Vector2D&, std::any = {});
 
     virtual eDecorationLayer           getDecorationLayer();
 
     virtual uint64_t                   getDecorationFlags();
+
+    virtual std::string                getDisplayName();
 
   private:
     CWindow* m_pWindow = nullptr;

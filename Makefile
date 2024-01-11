@@ -42,6 +42,7 @@ install:
 	chmod 755 ${PREFIX}/bin/Hyprland
 	chmod 755 ${PREFIX}/bin/hyprctl
 	chmod 755 ${PREFIX}/bin/hyprpm
+	cd ${PREFIX}/bin && ln -sf Hyprland hyprland
 	if [ ! -f ${PREFIX}/share/wayland-sessions/hyprland.desktop ]; then cp ./example/hyprland.desktop ${PREFIX}/share/wayland-sessions; fi
 	mkdir -p ${PREFIX}/share/hyprland
 	cp ./assets/wall_* ${PREFIX}/share/hyprland

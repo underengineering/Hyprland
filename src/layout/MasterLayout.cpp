@@ -102,16 +102,8 @@ void CHyprMasterLayout::onWindowCreatedTiling(CWindow* pWindow, eDirection direc
     const auto         MOUSECOORDS = g_pInputManager->getMouseCoordsInternal();
 
     if (g_pInputManager->m_bWasDraggingWindow && OPENINGON) {
-        for (auto& wd : OPENINGON->pWindow->m_dWindowDecorations) {
-            if (!(wd->getDecorationFlags() & DECORATION_ALLOWS_MOUSE_INPUT))
-                continue;
-
-            if (g_pDecorationPositioner->getWindowDecorationBox(wd.get()).containsPoint(MOUSECOORDS)) {
-                if (!wd->onEndWindowDragOnDeco(pWindow, MOUSECOORDS))
-                    return;
-                break;
-            }
-        }
+        if (OPENINGON->pWindow->checkInputOnDecos(INPUT_TYPE_DRAG_END, MOUSECOORDS, pWindow))
+            return;
     }
 
     // if it's a group, add the window
@@ -891,6 +883,9 @@ void CHyprMasterLayout::fullscreenRequestForWindow(CWindow* pWindow, eFullscreen
     pWindow->m_bIsFullscreen           = on;
     PWORKSPACE->m_bHasFullscreenWindow = !PWORKSPACE->m_bHasFullscreenWindow;
 
+    pWindow->updateDynamicRules();
+    pWindow->updateWindowDecos();
+
     g_pEventManager->postEvent(SHyprIPCEvent{"fullscreen", std::to_string((int)on)});
     EMIT_HOOK_EVENT("fullscreen", pWindow);
 
@@ -1336,7 +1331,13 @@ std::any CHyprMasterLayout::layoutMessage(SLayoutMessageHeader header, std::stri
         const auto PWINDOW = header.pWindow;
         const auto PNODE   = getNodeFromWindow(PWINDOW);
 
-        const auto OLDMASTER   = PNODE->isMaster ? PNODE : getMasterNodeOnWorkspace(PNODE->workspaceID);
+        if (!PNODE)
+            return 0;
+
+        const auto OLDMASTER = PNODE->isMaster ? PNODE : getMasterNodeOnWorkspace(PNODE->workspaceID);
+        if (!OLDMASTER)
+            return 0;
+
         const auto OLDMASTERIT = std::find(m_lMasterNodesData.begin(), m_lMasterNodesData.end(), *OLDMASTER);
 
         for (auto& nd : m_lMasterNodesData) {
@@ -1358,7 +1359,13 @@ std::any CHyprMasterLayout::layoutMessage(SLayoutMessageHeader header, std::stri
         const auto PWINDOW = header.pWindow;
         const auto PNODE   = getNodeFromWindow(PWINDOW);
 
-        const auto OLDMASTER   = PNODE->isMaster ? PNODE : getMasterNodeOnWorkspace(PNODE->workspaceID);
+        if (!PNODE)
+            return 0;
+
+        const auto OLDMASTER = PNODE->isMaster ? PNODE : getMasterNodeOnWorkspace(PNODE->workspaceID);
+        if (!OLDMASTER)
+            return 0;
+
         const auto OLDMASTERIT = std::find(m_lMasterNodesData.begin(), m_lMasterNodesData.end(), *OLDMASTER);
 
         for (auto& nd : m_lMasterNodesData | std::views::reverse) {

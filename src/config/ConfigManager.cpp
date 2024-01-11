@@ -134,9 +134,11 @@ void CConfigManager::setDefaultVars() {
     configValues["group:insert_after_current"].intValue = 1;
     configValues["group:focus_removed_window"].intValue = 1;
 
+    configValues["group:groupbar:enabled"].intValue       = 1;
     configValues["group:groupbar:font_family"].strValue   = "Sans";
     configValues["group:groupbar:font_size"].intValue     = 8;
     configValues["group:groupbar:gradients"].intValue     = 1;
+    configValues["group:groupbar:priority"].intValue      = 3;
     configValues["group:groupbar:render_titles"].intValue = 1;
     configValues["group:groupbar:scrolling"].intValue     = 1;
     configValues["group:groupbar:text_color"].intValue    = 0xffffffff;
@@ -159,36 +161,38 @@ void CConfigManager::setDefaultVars() {
     configValues["debug:watchdog_timeout"].intValue     = 5;
     configValues["debug:disable_scale_checks"].intValue = 0;
 
-    configValues["decoration:rounding"].intValue                 = 0;
-    configValues["decoration:blur:enabled"].intValue             = 1;
-    configValues["decoration:blur:size"].intValue                = 8;
-    configValues["decoration:blur:passes"].intValue              = 1;
-    configValues["decoration:blur:ignore_opacity"].intValue      = 0;
-    configValues["decoration:blur:new_optimizations"].intValue   = 1;
-    configValues["decoration:blur:xray"].intValue                = 0;
-    configValues["decoration:blur:contrast"].floatValue          = 0.8916;
-    configValues["decoration:blur:brightness"].floatValue        = 1.0;
-    configValues["decoration:blur:vibrancy"].floatValue          = 0.1696;
-    configValues["decoration:blur:vibrancy_darkness"].floatValue = 0.0;
-    configValues["decoration:blur:noise"].floatValue             = 0.0117;
-    configValues["decoration:blur:special"].intValue             = 0;
-    configValues["decoration:active_opacity"].floatValue         = 1;
-    configValues["decoration:inactive_opacity"].floatValue       = 1;
-    configValues["decoration:fullscreen_opacity"].floatValue     = 1;
-    configValues["decoration:no_blur_on_oversized"].intValue     = 0;
-    configValues["decoration:drop_shadow"].intValue              = 1;
-    configValues["decoration:shadow_range"].intValue             = 4;
-    configValues["decoration:shadow_render_power"].intValue      = 3;
-    configValues["decoration:shadow_ignore_window"].intValue     = 1;
-    configValues["decoration:shadow_offset"].vecValue            = Vector2D();
-    configValues["decoration:shadow_scale"].floatValue           = 1.f;
-    configValues["decoration:col.shadow"].intValue               = 0xee1a1a1a;
-    configValues["decoration:col.shadow_inactive"].intValue      = INT_MAX;
-    configValues["decoration:dim_inactive"].intValue             = 0;
-    configValues["decoration:dim_strength"].floatValue           = 0.5f;
-    configValues["decoration:dim_special"].floatValue            = 0.2f;
-    configValues["decoration:dim_around"].floatValue             = 0.4f;
-    configValues["decoration:screen_shader"].strValue            = STRVAL_EMPTY;
+    configValues["decoration:rounding"].intValue                  = 0;
+    configValues["decoration:blur:enabled"].intValue              = 1;
+    configValues["decoration:blur:size"].intValue                 = 8;
+    configValues["decoration:blur:passes"].intValue               = 1;
+    configValues["decoration:blur:ignore_opacity"].intValue       = 0;
+    configValues["decoration:blur:new_optimizations"].intValue    = 1;
+    configValues["decoration:blur:xray"].intValue                 = 0;
+    configValues["decoration:blur:contrast"].floatValue           = 0.8916;
+    configValues["decoration:blur:brightness"].floatValue         = 1.0;
+    configValues["decoration:blur:vibrancy"].floatValue           = 0.1696;
+    configValues["decoration:blur:vibrancy_darkness"].floatValue  = 0.0;
+    configValues["decoration:blur:noise"].floatValue              = 0.0117;
+    configValues["decoration:blur:special"].intValue              = 0;
+    configValues["decoration:blur:popups"].intValue               = 0;
+    configValues["decoration:blur:popups_ignorealpha"].floatValue = 0.2;
+    configValues["decoration:active_opacity"].floatValue          = 1;
+    configValues["decoration:inactive_opacity"].floatValue        = 1;
+    configValues["decoration:fullscreen_opacity"].floatValue      = 1;
+    configValues["decoration:no_blur_on_oversized"].intValue      = 0;
+    configValues["decoration:drop_shadow"].intValue               = 1;
+    configValues["decoration:shadow_range"].intValue              = 4;
+    configValues["decoration:shadow_render_power"].intValue       = 3;
+    configValues["decoration:shadow_ignore_window"].intValue      = 1;
+    configValues["decoration:shadow_offset"].vecValue             = Vector2D();
+    configValues["decoration:shadow_scale"].floatValue            = 1.f;
+    configValues["decoration:col.shadow"].intValue                = 0xee1a1a1a;
+    configValues["decoration:col.shadow_inactive"].intValue       = INT_MAX;
+    configValues["decoration:dim_inactive"].intValue              = 0;
+    configValues["decoration:dim_strength"].floatValue            = 0.5f;
+    configValues["decoration:dim_special"].floatValue             = 0.2f;
+    configValues["decoration:dim_around"].floatValue              = 0.4f;
+    configValues["decoration:screen_shader"].strValue             = STRVAL_EMPTY;
 
     configValues["dwindle:pseudotile"].intValue                   = 0;
     configValues["dwindle:force_split"].intValue                  = 0;
@@ -219,6 +223,7 @@ void CConfigManager::setDefaultVars() {
 
     configValues["input:follow_mouse"].intValue                     = 1;
     configValues["input:mouse_refocus"].intValue                    = 1;
+    configValues["input:special_fallthrough"].intValue              = 0;
     configValues["input:sensitivity"].floatValue                    = 0.f;
     configValues["input:accel_profile"].strValue                    = STRVAL_EMPTY;
     configValues["input:kb_file"].strValue                          = STRVAL_EMPTY;
@@ -279,6 +284,8 @@ void CConfigManager::setDefaultVars() {
 
     configValues["xwayland:use_nearest_neighbor"].intValue = 1;
     configValues["xwayland:force_zero_scaling"].intValue   = 0;
+
+    configValues["opengl:nvidia_anti_flicker"].intValue = 1;
 
     configValues["autogenerated"].intValue = 0;
 }
@@ -389,10 +396,20 @@ void CConfigManager::configSetValueSafe(const std::string& COMMAND, const std::s
         if (!COMMAND.starts_with("device:") /* devices parsed later */ && !COMMAND.starts_with("plugin:") /* plugins parsed later */) {
             if (COMMAND[0] == '$') {
                 // register a dynamic var
-                Debug::log(LOG, "Registered dynamic var \"{}\" -> {}", COMMAND, VALUE);
-                configDynamicVars.emplace_back(std::make_pair<>(COMMAND.substr(1), VALUE));
+                bool found = false;
+                for (auto& [var, val] : configDynamicVars) {
+                    if (var == COMMAND.substr(1)) {
+                        Debug::log(LOG, "Registered new value for dynamic var \"{}\" -> {}", COMMAND, VALUE);
+                        val   = VALUE;
+                        found = true;
+                    }
+                }
 
-                std::sort(configDynamicVars.begin(), configDynamicVars.end(), [&](const auto& a, const auto& b) { return a.first.length() > b.first.length(); });
+                if (!found) {
+                    Debug::log(LOG, "Registered dynamic var \"{}\" -> {}", COMMAND, VALUE);
+                    configDynamicVars.emplace_back(std::make_pair<>(COMMAND.substr(1), VALUE));
+                    std::sort(configDynamicVars.begin(), configDynamicVars.end(), [&](const auto& a, const auto& b) { return a.first.length() > b.first.length(); });
+                }
             } else {
                 parseError = "Error setting value <" + VALUE + "> for field <" + COMMAND + ">: No such field.";
             }
@@ -929,7 +946,7 @@ void CConfigManager::handleBind(const std::string& command, const std::string& v
             g_pKeybindManager->addKeybind(
                 SKeybind{"", std::stoi(KEY.substr(5)), MOD, HANDLER, COMMAND, locked, m_szCurrentSubmap, release, repeat, mouse, nonConsuming, transparent, ignoreMods});
         else
-            g_pKeybindManager->addKeybind(SKeybind{KEY, -1, MOD, HANDLER, COMMAND, locked, m_szCurrentSubmap, release, repeat, mouse, nonConsuming, transparent, ignoreMods});
+            g_pKeybindManager->addKeybind(SKeybind{KEY, 0, MOD, HANDLER, COMMAND, locked, m_szCurrentSubmap, release, repeat, mouse, nonConsuming, transparent, ignoreMods});
     }
 }
 
@@ -1027,14 +1044,16 @@ void CConfigManager::handleWindowRuleV2(const std::string& command, const std::s
     rule.szRule  = RULE;
     rule.szValue = VALUE;
 
-    const auto TITLEPOS       = VALUE.find("title:");
-    const auto CLASSPOS       = VALUE.find("class:");
-    const auto X11POS         = VALUE.find("xwayland:");
-    const auto FLOATPOS       = VALUE.find("floating:");
-    const auto FULLSCREENPOS  = VALUE.find("fullscreen:");
-    const auto PINNEDPOS      = VALUE.find("pinned:");
-    const auto FOCUSPOS       = VALUE.find("focus:");
-    const auto ONWORKSPACEPOS = VALUE.find("onworkspace:");
+    const auto TITLEPOS        = VALUE.find("title:");
+    const auto CLASSPOS        = VALUE.find("class:");
+    const auto INITIALTITLEPOS = VALUE.find("initialTitle:");
+    const auto INITIALCLASSPOS = VALUE.find("initialClass:");
+    const auto X11POS          = VALUE.find("xwayland:");
+    const auto FLOATPOS        = VALUE.find("floating:");
+    const auto FULLSCREENPOS   = VALUE.find("fullscreen:");
+    const auto PINNEDPOS       = VALUE.find("pinned:");
+    const auto FOCUSPOS        = VALUE.find("focus:");
+    const auto ONWORKSPACEPOS  = VALUE.find("onworkspace:");
 
     // find workspacepos that isn't onworkspacepos
     size_t WORKSPACEPOS = std::string::npos;
@@ -1047,8 +1066,9 @@ void CConfigManager::handleWindowRuleV2(const std::string& command, const std::s
         currentPos = VALUE.find("workspace:", currentPos + 1);
     }
 
-    if (TITLEPOS == std::string::npos && CLASSPOS == std::string::npos && X11POS == std::string::npos && FLOATPOS == std::string::npos && FULLSCREENPOS == std::string::npos &&
-        PINNEDPOS == std::string::npos && WORKSPACEPOS == std::string::npos && FOCUSPOS == std::string::npos && ONWORKSPACEPOS == std::string::npos) {
+    if (TITLEPOS == std::string::npos && CLASSPOS == std::string::npos && INITIALTITLEPOS == std::string::npos && INITIALCLASSPOS == std::string::npos &&
+        X11POS == std::string::npos && FLOATPOS == std::string::npos && FULLSCREENPOS == std::string::npos && PINNEDPOS == std::string::npos && WORKSPACEPOS == std::string::npos &&
+        FOCUSPOS == std::string::npos && ONWORKSPACEPOS == std::string::npos) {
         Debug::log(ERR, "Invalid rulev2 syntax: {}", VALUE);
         parseError = "Invalid rulev2 syntax: " + VALUE;
         return;
@@ -1063,6 +1083,10 @@ void CConfigManager::handleWindowRuleV2(const std::string& command, const std::s
             min = TITLEPOS;
         if (CLASSPOS > pos && CLASSPOS < min)
             min = CLASSPOS;
+        if (INITIALTITLEPOS > pos && INITIALTITLEPOS < min)
+            min = INITIALTITLEPOS;
+        if (INITIALCLASSPOS > pos && INITIALCLASSPOS < min)
+            min = INITIALCLASSPOS;
         if (X11POS > pos && X11POS < min)
             min = X11POS;
         if (FLOATPOS > pos && FLOATPOS < min)
@@ -1094,6 +1118,12 @@ void CConfigManager::handleWindowRuleV2(const std::string& command, const std::s
     if (TITLEPOS != std::string::npos)
         rule.szTitle = extract(TITLEPOS + 6);
 
+    if (INITIALCLASSPOS != std::string::npos)
+        rule.szInitialClass = extract(INITIALCLASSPOS + 13);
+
+    if (INITIALTITLEPOS != std::string::npos)
+        rule.szInitialTitle = extract(INITIALTITLEPOS + 13);
+
     if (X11POS != std::string::npos)
         rule.bX11 = extract(X11POS + 9) == "1" ? 1 : 0;
 
@@ -1124,6 +1154,12 @@ void CConfigManager::handleWindowRuleV2(const std::string& command, const std::s
                     return false;
 
                 if (!rule.szTitle.empty() && rule.szTitle != other.szTitle)
+                    return false;
+
+                if (!rule.szInitialClass.empty() && rule.szInitialClass != other.szInitialClass)
+                    return false;
+
+                if (!rule.szInitialTitle.empty() && rule.szInitialTitle != other.szInitialTitle)
                     return false;
 
                 if (rule.bX11 != -1 && rule.bX11 != other.bX11)
@@ -1707,6 +1743,10 @@ void CConfigManager::loadConfigLoadVars() {
         ifs.close();
     }
 
+    for (auto& w : g_pCompositor->m_vWindows) {
+        w->uncacheWindowDecos();
+    }
+
     for (auto& m : g_pCompositor->m_vMonitors)
         g_pLayoutManager->getCurrentLayout()->recalculateMonitor(m->ID);
 
@@ -1789,6 +1829,8 @@ void CConfigManager::loadConfigLoadVars() {
     handlePluginLoads();
 
     EMIT_HOOK_EVENT("configReloaded", nullptr);
+    if (g_pEventManager)
+        g_pEventManager->postEvent(SHyprIPCEvent{"configreloaded", ""});
 }
 
 void CConfigManager::tick() {
@@ -2004,6 +2046,20 @@ std::vector<SWindowRule> CConfigManager::getMatchingRules(CWindow* pWindow) {
                     std::regex RULECHECK(rule.szTitle);
 
                     if (!std::regex_search(title, RULECHECK))
+                        continue;
+                }
+
+                if (rule.szInitialTitle != "") {
+                    std::regex RULECHECK(rule.szInitialTitle);
+
+                    if (!std::regex_search(pWindow->m_szInitialTitle, RULECHECK))
+                        continue;
+                }
+
+                if (rule.szInitialClass != "") {
+                    std::regex RULECHECK(rule.szInitialClass);
+
+                    if (!std::regex_search(pWindow->m_szInitialClass, RULECHECK))
                         continue;
                 }
 

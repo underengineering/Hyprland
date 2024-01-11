@@ -222,6 +222,30 @@ void CWindow::removeWindowDeco(IHyprWindowDecoration* deco) {
     g_pLayoutManager->getCurrentLayout()->recalculateWindow(this);
 }
 
+void CWindow::uncacheWindowDecos() {
+    for (auto& wd : m_dWindowDecorations) {
+        g_pDecorationPositioner->uncacheDecoration(wd.get());
+    }
+}
+
+bool CWindow::checkInputOnDecos(const eInputType type, const Vector2D& mouseCoords, std::any data) {
+    if (type != INPUT_TYPE_DRAG_END && hasPopupAt(mouseCoords))
+        return false;
+
+    for (auto& wd : m_dWindowDecorations) {
+        if (!(wd->getDecorationFlags() & DECORATION_ALLOWS_MOUSE_INPUT))
+            continue;
+
+        if (!g_pDecorationPositioner->getWindowDecorationBox(wd.get()).containsPoint(mouseCoords))
+            continue;
+
+        if (wd->onInputOnDeco(type, mouseCoords, data))
+            return true;
+    }
+
+    return false;
+}
+
 pid_t CWindow::getPID() {
     pid_t PID = -1;
     if (!m_bIsX11) {
@@ -294,7 +318,7 @@ void CWindow::destroyToplevelHandle() {
 }
 
 void CWindow::updateToplevel() {
-    updateSurfaceOutputs();
+    updateSurfaceScaleTransformDetails();
 
     if (!m_phForeignToplevel)
         return;
@@ -321,8 +345,8 @@ void sendLeaveIter(wlr_surface* pSurface, int x, int y, void* data) {
     wlr_surface_send_leave(pSurface, OUTPUT);
 }
 
-void CWindow::updateSurfaceOutputs() {
-    if (m_iLastSurfaceMonitorID == m_iMonitorID || !m_bIsMapped || m_bHidden)
+void CWindow::updateSurfaceScaleTransformDetails() {
+    if (!m_bIsMapped || m_bHidden)
         return;
 
     const auto PLASTMONITOR = g_pCompositor->getMonitorFromID(m_iLastSurfaceMonitorID);
@@ -331,16 +355,23 @@ void CWindow::updateSurfaceOutputs() {
 
     const auto PNEWMONITOR = g_pCompositor->getMonitorFromID(m_iMonitorID);
 
-    if (PLASTMONITOR && PLASTMONITOR->m_bEnabled)
-        wlr_surface_for_each_surface(m_pWLSurface.wlr(), sendLeaveIter, PLASTMONITOR->output);
+    if (PNEWMONITOR != PLASTMONITOR) {
+        if (PLASTMONITOR && PLASTMONITOR->m_bEnabled)
+            wlr_surface_for_each_surface(m_pWLSurface.wlr(), sendLeaveIter, PLASTMONITOR->output);
 
-    wlr_surface_for_each_surface(m_pWLSurface.wlr(), sendEnterIter, PNEWMONITOR->output);
+        wlr_surface_for_each_surface(m_pWLSurface.wlr(), sendEnterIter, PNEWMONITOR->output);
+    }
 
     wlr_surface_for_each_surface(
         m_pWLSurface.wlr(),
         [](wlr_surface* surf, int x, int y, void* data) {
             const auto PMONITOR = g_pCompositor->getMonitorFromID(((CWindow*)data)->m_iMonitorID);
-            g_pCompositor->setPreferredScaleForSurface(surf, PMONITOR ? PMONITOR->scale : 1.f);
+
+            const auto PSURFACE = CWLSurface::surfaceFromWlr(surf);
+            if (PSURFACE && PSURFACE->m_fLastScale == PMONITOR->scale)
+                return;
+
+            g_pCompositor->setPreferredScaleForSurface(surf, PMONITOR->scale);
             g_pCompositor->setPreferredTransformForSurface(surf, PMONITOR->transform);
         },
         this);
@@ -1018,4 +1049,5 @@ void CWindow::setSuspended(bool suspend) {
         return;
 
     wlr_xdg_toplevel_set_suspended(m_uSurface.xdg->toplevel, suspend);
+    m_bSuspended = suspend;
 }

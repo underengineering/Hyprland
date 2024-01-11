@@ -7,6 +7,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/utsname.h>
 #include <sys/un.h>
 #include <unistd.h>
 #include <errno.h>
@@ -753,10 +754,7 @@ std::string versionRequest(HyprCtl::eHyprCtlOutputFormat format) {
 #ifdef LEGACY_RENDERER
         result += "legacyrenderer\n";
 #endif
-#ifndef NDEBUG
-        result += "debug\n";
-#endif
-#ifdef HYPRLAND_DEBUG
+#ifndef ISDEBUG
         result += "debug\n";
 #endif
 #ifdef NO_XWAYLAND
@@ -779,10 +777,7 @@ std::string versionRequest(HyprCtl::eHyprCtlOutputFormat format) {
 #ifdef LEGACY_RENDERER
         result += "\"legacyrenderer\",";
 #endif
-#ifndef NDEBUG
-        result += "\"debug\",";
-#endif
-#ifdef HYPRLAND_DEBUG
+#ifndef ISDEBUG
         result += "\"debug\",";
 #endif
 #ifdef NO_XWAYLAND
@@ -797,6 +792,39 @@ std::string versionRequest(HyprCtl::eHyprCtlOutputFormat format) {
     }
 
     return ""; // make the compiler happy
+}
+
+std::string systemInfoRequest() {
+    std::string result = versionRequest(HyprCtl::eHyprCtlOutputFormat::FORMAT_NORMAL);
+
+    result += "\n\nSystem Information:\n";
+
+    struct utsname unameInfo;
+
+    uname(&unameInfo);
+
+    result += "System name: " + std::string{unameInfo.sysname} + "\n";
+    result += "Node name: " + std::string{unameInfo.nodename} + "\n";
+    result += "Release: " + std::string{unameInfo.release} + "\n";
+    result += "Version: " + std::string{unameInfo.version} + "\n";
+
+    result += "\n\n";
+
+#if defined(__DragonFly__) || defined(__FreeBSD__)
+    const std::string GPUINFO = execAndGet("pciconf -lv | fgrep -A4 vga");
+#else
+    const std::string GPUINFO = execAndGet("lspci -vnn | grep VGA");
+#endif
+    result += "GPU information: \n" + GPUINFO + "\n\n";
+
+    result += "os-release: " + execAndGet("cat /etc/os-release") + "\n\n";
+
+    result += "plugins:\n";
+    for (auto& pl : g_pPluginSystem->getAllPlugins()) {
+        result += std::format("  {} by {} ver {}\n", pl->name, pl->author, pl->version);
+    }
+
+    return result;
 }
 
 std::string dispatchRequest(std::string in) {
@@ -1180,6 +1208,32 @@ std::string dispatchGetOption(std::string request, HyprCtl::eHyprCtlOutputFormat
     }
 }
 
+std::string decorationRequest(std::string request, HyprCtl::eHyprCtlOutputFormat format) {
+    CVarList   vars(request, 0, ' ');
+    const auto PWINDOW = g_pCompositor->getWindowByRegex(vars[1]);
+
+    if (!PWINDOW)
+        return "none";
+
+    std::string result = "";
+    if (format == HyprCtl::FORMAT_JSON) {
+        result += "[";
+        for (auto& wd : PWINDOW->m_dWindowDecorations) {
+            result += "{\n\"decorationName\": \"" + wd->getDisplayName() + "\",\n\"priority\": " + std::to_string(wd->getPositioningInfo().priority) + "\n},";
+        }
+
+        trimTrailingComma(result);
+        result += "]";
+    } else {
+        result = +"Decoration\tPriority\n";
+        for (auto& wd : PWINDOW->m_dWindowDecorations) {
+            result += wd->getDisplayName() + "\t" + std::to_string(wd->getPositioningInfo().priority) + "\n";
+        }
+    }
+
+    return result;
+}
+
 void createOutputIter(wlr_backend* backend, void* data) {
     const auto DATA = (std::pair<std::string, bool>*)data;
 
@@ -1395,6 +1449,8 @@ std::string getReply(std::string request) {
         return bindsRequest(format);
     else if (request == "globalshortcuts")
         return globalShortcutsRequest(format);
+    else if (request == "systeminfo")
+        return systemInfoRequest();
     else if (request == "animations")
         return animationsRequest(format);
     else if (request == "rollinglog")
@@ -1421,6 +1477,8 @@ std::string getReply(std::string request) {
         return dispatchSetCursor(request);
     else if (request.starts_with("getoption"))
         return dispatchGetOption(request, format);
+    else if (request.starts_with("decorations"))
+        return decorationRequest(request, format);
     else if (request.starts_with("[[BATCH]]"))
         return dispatchBatch(request);
 
