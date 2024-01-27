@@ -138,6 +138,7 @@ void CConfigManager::setDefaultVars() {
     configValues["group:groupbar:font_family"].strValue   = "Sans";
     configValues["group:groupbar:font_size"].intValue     = 8;
     configValues["group:groupbar:gradients"].intValue     = 1;
+    configValues["group:groupbar:height"].intValue        = 14;
     configValues["group:groupbar:priority"].intValue      = 3;
     configValues["group:groupbar:render_titles"].intValue = 1;
     configValues["group:groupbar:scrolling"].intValue     = 1;
@@ -254,6 +255,7 @@ void CConfigManager::setDefaultVars() {
     configValues["input:touchpad:scroll_factor"].floatValue         = 1.f;
     configValues["input:touchdevice:transform"].intValue            = 0;
     configValues["input:touchdevice:output"].strValue               = STRVAL_EMPTY;
+    configValues["input:touchdevice:enabled"].intValue              = 1;
     configValues["input:tablet:transform"].intValue                 = 0;
     configValues["input:tablet:output"].strValue                    = STRVAL_EMPTY;
     configValues["input:tablet:region_position"].vecValue           = Vector2D();
@@ -319,7 +321,7 @@ void CConfigManager::setDeviceDefaultVars(const std::string& dev) {
     cfgValues["scroll_points"].strValue           = STRVAL_EMPTY;
     cfgValues["transform"].intValue               = 0;
     cfgValues["output"].strValue                  = STRVAL_EMPTY;
-    cfgValues["enabled"].intValue                 = 1;          // only for mice / touchpads
+    cfgValues["enabled"].intValue                 = 1;          // only for mice, touchpads, and touchdevices
     cfgValues["region_position"].vecValue         = Vector2D(); // only for tablets
     cfgValues["region_size"].vecValue             = Vector2D(); // only for tablets
     cfgValues["relative_input"].intValue          = 0;          // only for tablets
@@ -550,7 +552,7 @@ void CConfigManager::configSetValueSafe(const std::string& COMMAND, const std::s
         }
     }
 
-    if (COMMAND == "decoration:screen_shader") {
+    if (COMMAND == "decoration:screen_shader" && VALUE != STRVAL_EMPTY) {
         const auto PATH = absolutePath(VALUE, configCurrentPath);
 
         configPaths.push_back(PATH);

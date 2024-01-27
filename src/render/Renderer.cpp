@@ -1575,8 +1575,7 @@ void CHyprRenderer::damageSurface(wlr_surface* pSurface, double x, double y, dou
         y += CORRECTION.y;
     }
 
-    CRegion damageBox;
-    wlr_surface_get_effective_damage(pSurface, damageBox.pixman());
+    CRegion damageBox{&pSurface->buffer_damage};
     if (scale != 1.0)
         wlr_region_scale(damageBox.pixman(), damageBox.pixman(), scale);
 
@@ -2101,6 +2100,13 @@ bool CHyprRenderer::applyMonitorRule(CMonitor* pMonitor, SMonitorRule* pMonitorR
 
     wlr_damage_ring_set_bounds(&pMonitor->damage, pMonitor->vecTransformedSize.x, pMonitor->vecTransformedSize.y);
 
+    // Set scale for all surfaces on this monitor, needed for some clients
+    // but not on unsafe state to avoid crashes
+    if (!g_pCompositor->m_bUnsafeState) {
+        for (auto& w : g_pCompositor->m_vWindows) {
+            w->updateSurfaceScaleTransformDetails();
+        }
+    }
     // updato us
     arrangeLayersForMonitor(pMonitor->ID);
 
