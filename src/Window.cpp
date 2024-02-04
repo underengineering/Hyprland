@@ -518,6 +518,14 @@ void CWindow::onMap() {
                                           "CWindow");
 
     m_vReportedSize = m_vPendingReportedSize;
+
+    for (const auto& ctrl : g_pHyprRenderer->m_vTearingControllers) {
+        if (ctrl->pWlrHint->surface != m_pWLSurface.wlr())
+            continue;
+
+        m_bTearingHint = ctrl->pWlrHint->current;
+        break;
+    }
 }
 
 void CWindow::onBorderAngleAnimEnd(void* ptr) {
@@ -1061,7 +1069,7 @@ int CWindow::getRealBorderSize() {
 }
 
 bool CWindow::canBeTorn() {
-    return (m_sAdditionalConfigData.forceTearing.toUnderlying() || m_bTearingHint) && g_pHyprRenderer->m_bTearingEnvSatisfied;
+    return (m_sAdditionalConfigData.forceTearing.toUnderlying() || m_bTearingHint);
 }
 
 bool CWindow::shouldSendFullscreenState() {

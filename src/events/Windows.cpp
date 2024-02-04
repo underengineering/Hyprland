@@ -639,7 +639,8 @@ void Events::listener_mapWindow(void* owner, void* data) {
     g_pCompositor->setPreferredScaleForSurface(PWINDOW->m_pWLSurface.wlr(), PMONITOR->scale);
     g_pCompositor->setPreferredTransformForSurface(PWINDOW->m_pWLSurface.wlr(), PMONITOR->transform);
 
-    g_pInputManager->sendMotionEventsToFocused();
+    if (!g_pCompositor->m_sSeat.mouse || !g_pCompositor->m_sSeat.mouse->constraintActive)
+        g_pInputManager->sendMotionEventsToFocused();
 
     // fix some xwayland apps that don't behave nicely
     PWINDOW->m_vReportedSize = PWINDOW->m_vPendingReportedSize;
@@ -1052,11 +1053,8 @@ void Events::listener_configureX11(void* owner, void* data) {
 
     static auto* const PXWLFORCESCALEZERO = &g_pConfigManager->getConfigValuePtr("xwayland:force_zero_scaling")->intValue;
     if (*PXWLFORCESCALEZERO) {
-        if (const auto PMONITOR = g_pCompositor->getMonitorFromID(PWINDOW->m_iMonitorID); PMONITOR) {
-            const Vector2D DELTA = PWINDOW->m_vRealSize.goalv() - PWINDOW->m_vRealSize.goalv() / PMONITOR->scale;
+        if (const auto PMONITOR = g_pCompositor->getMonitorFromID(PWINDOW->m_iMonitorID); PMONITOR)
             PWINDOW->m_vRealSize.setValueAndWarp(PWINDOW->m_vRealSize.goalv() / PMONITOR->scale);
-            PWINDOW->m_vRealPosition.setValueAndWarp(PWINDOW->m_vRealPosition.goalv() + DELTA / 2.0);
-        }
     }
 
     PWINDOW->m_vPosition = PWINDOW->m_vRealPosition.vec();
@@ -1137,8 +1135,7 @@ void Events::listener_unmanagedSetGeometry(void* owner, void* data) {
         g_pHyprRenderer->damageWindow(PWINDOW);
 
         PWINDOW->m_vReportedPosition    = PWINDOW->m_vRealPosition.goalv();
-        PWINDOW->m_vReportedSize        = PWINDOW->m_vRealSize.goalv();
-        PWINDOW->m_vPendingReportedSize = PWINDOW->m_vReportedSize;
+        PWINDOW->m_vPendingReportedSize = PWINDOW->m_vRealSize.goalv();
     }
 }
 

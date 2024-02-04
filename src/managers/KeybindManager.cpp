@@ -526,7 +526,7 @@ bool CKeybindManager::handleKeybinds(const uint32_t modmask, const SPressedKeyWi
 
         if (!pressed) {
             // Require mods to be matching when the key was first pressed.
-            if (key.modmaskAtPressTime != modmask) {
+            if (key.modmaskAtPressTime != modmask && !k.ignoreMods) {
                 // Handle properly `bindr` where a key is itself a bind mod for example:
                 // "bindr = SUPER, SUPER_L, exec, $launcher".
                 // This needs to be handled separately for the above case, because `key.modmaskAtPressTime` is set
@@ -1852,11 +1852,11 @@ void CKeybindManager::dpms(std::string arg) {
         if (!port.empty() && m->szName != port)
             continue;
 
-        wlr_output_enable(m->output, enable);
+        wlr_output_state_set_enabled(m->state.wlr(), enable);
 
         m->dpmsStatus = enable;
 
-        if (!wlr_output_commit(m->output)) {
+        if (!m->state.commit()) {
             Debug::log(ERR, "Couldn't commit output {}", m->szName);
         }
 
