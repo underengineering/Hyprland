@@ -261,7 +261,7 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
             return;
         }
 
-        const auto PWINDOWIDEAL = g_pCompositor->vectorToWindowIdeal(mouseCoords);
+        const auto PWINDOWIDEAL = g_pCompositor->vectorToWindowUnified(mouseCoords, RESERVED_EXTENTS | INPUT_EXTENTS | ALLOW_FLOATING);
 
         if (PWINDOWIDEAL &&
             ((PWINDOWIDEAL->m_bIsFloating && PWINDOWIDEAL->m_bCreatedOverFullscreen) /* floating over fullscreen */
@@ -282,19 +282,19 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
         if (PWORKSPACE->m_bHasFullscreenWindow && PWORKSPACE->m_efFullscreenMode == FULLSCREEN_MAXIMIZED) {
 
             if (PMONITOR->specialWorkspaceID) {
-                pFoundWindow = g_pCompositor->vectorToWindowIdeal(mouseCoords);
+                pFoundWindow = g_pCompositor->vectorToWindowUnified(mouseCoords, RESERVED_EXTENTS | INPUT_EXTENTS | ALLOW_FLOATING);
 
                 if (pFoundWindow && !g_pCompositor->isWorkspaceSpecial(pFoundWindow->m_iWorkspaceID)) {
                     pFoundWindow = g_pCompositor->getFullscreenWindowOnWorkspace(PWORKSPACE->m_iID);
                 }
             } else {
-                pFoundWindow = g_pCompositor->vectorToWindowIdeal(mouseCoords);
+                pFoundWindow = g_pCompositor->vectorToWindowUnified(mouseCoords, RESERVED_EXTENTS | INPUT_EXTENTS | ALLOW_FLOATING);
 
                 if (!(pFoundWindow && pFoundWindow->m_bIsFloating && pFoundWindow->m_bCreatedOverFullscreen))
                     pFoundWindow = g_pCompositor->getFullscreenWindowOnWorkspace(PWORKSPACE->m_iID);
             }
         } else {
-            pFoundWindow = g_pCompositor->vectorToWindowIdeal(mouseCoords);
+            pFoundWindow = g_pCompositor->vectorToWindowUnified(mouseCoords, RESERVED_EXTENTS | INPUT_EXTENTS | ALLOW_FLOATING);
         }
 
         if (pFoundWindow) {
@@ -315,7 +315,8 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
         foundSurface =
             g_pCompositor->vectorToLayerSurface(mouseCoords, &PMONITOR->m_aLayerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND], &surfaceCoords, &pFoundLayerSurface);
 
-    g_pCompositor->scheduleFrameForMonitor(g_pCompositor->m_pLastMonitor);
+    if (g_pCompositor->m_pLastMonitor->output->software_cursor_locks > 0)
+        g_pCompositor->scheduleFrameForMonitor(g_pCompositor->m_pLastMonitor);
 
     if (!foundSurface) {
         if (!m_bEmptyFocusCursorSet) {
@@ -422,8 +423,16 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
             return; // don't enter any new surfaces
         } else {
             if (allowKeyboardRefocus && ((FOLLOWMOUSE != 3 && (*PMOUSEREFOCUS || m_pLastMouseFocus != pFoundWindow)) || refocus)) {
-                m_pLastMouseFocus = pFoundWindow;
-                g_pCompositor->focusWindow(pFoundWindow, foundSurface);
+                if (m_pLastMouseFocus != pFoundWindow || g_pCompositor->m_pLastWindow != pFoundWindow || g_pCompositor->m_pLastFocus != foundSurface) {
+                    m_pLastMouseFocus = pFoundWindow;
+
+                    // TODO: this looks wrong. When over a popup, it constantly is switching.
+                    // Temp fix until that's figured out. Otherwise spams windowrule lookups and other shit.
+                    if (m_pLastMouseFocus != pFoundWindow || g_pCompositor->m_pLastWindow != pFoundWindow)
+                        g_pCompositor->focusWindow(pFoundWindow, foundSurface);
+                    else
+                        g_pCompositor->focusSurface(foundSurface, pFoundWindow);
+                }
             }
         }
 
@@ -486,11 +495,18 @@ void CInputManager::processMouseRequest(wlr_seat_pointer_request_set_cursor_even
     if (!cursorImageUnlocked())
         return;
 
+    Debug::log(LOG, "cursorImage request: surface {:x}", (uintptr_t)e->surface);
+
     if (e->seat_client == g_pCompositor->m_sSeat.seat->pointer_state.focused_client) {
-        m_sCursorSurfaceInfo.wlSurface.unassign();
+
+        if (e->surface != m_sCursorSurfaceInfo.wlSurface.wlr()) {
+            m_sCursorSurfaceInfo.wlSurface.unassign();
+
+            if (e->surface)
+                m_sCursorSurfaceInfo.wlSurface.assign(e->surface);
+        }
 
         if (e->surface) {
-            m_sCursorSurfaceInfo.wlSurface.assign(e->surface);
             m_sCursorSurfaceInfo.vHotspot = {e->hotspot_x, e->hotspot_y};
             m_sCursorSurfaceInfo.hidden   = false;
         } else {
@@ -508,6 +524,8 @@ void CInputManager::processMouseRequest(wlr_seat_pointer_request_set_cursor_even
 void CInputManager::processMouseRequest(wlr_cursor_shape_manager_v1_request_set_shape_event* e) {
     if (!cursorImageUnlocked())
         return;
+
+    Debug::log(LOG, "cursorImage request: shape {}", (uint32_t)e->shape);
 
     if (e->seat_client == g_pCompositor->m_sSeat.seat->pointer_state.focused_client) {
         m_sCursorSurfaceInfo.wlSurface.unassign();
@@ -599,7 +617,7 @@ void CInputManager::processMouseDownNormal(wlr_pointer_button_event* e) {
         return;
 
     const auto mouseCoords = g_pInputManager->getMouseCoordsInternal();
-    const auto w           = g_pCompositor->vectorToWindowIdeal(mouseCoords);
+    const auto w           = g_pCompositor->vectorToWindowUnified(mouseCoords, ALLOW_FLOATING | RESERVED_EXTENTS | INPUT_EXTENTS);
 
     if (w && !m_bLastFocusOnLS && w->checkInputOnDecos(INPUT_TYPE_BUTTON, mouseCoords, e))
         return;
@@ -645,15 +663,17 @@ void CInputManager::processMouseDownNormal(wlr_pointer_button_event* e) {
     }
 
     // notify app if we didnt handle it
-    if (g_pCompositor->doesSeatAcceptInput(g_pCompositor->m_pLastFocus)) {
+    if (g_pCompositor->doesSeatAcceptInput(g_pCompositor->m_pLastFocus))
         wlr_seat_pointer_notify_button(g_pCompositor->m_sSeat.seat, e->time_msec, e->button, e->state);
-    }
+
+    if (const auto PMON = g_pCompositor->getMonitorFromVector(mouseCoords); PMON != g_pCompositor->m_pLastMonitor && PMON)
+        g_pCompositor->setActiveMonitor(PMON);
 }
 
 void CInputManager::processMouseDownKill(wlr_pointer_button_event* e) {
     switch (e->state) {
         case WLR_BUTTON_PRESSED: {
-            const auto PWINDOW = g_pCompositor->vectorToWindowIdeal(getMouseCoordsInternal());
+            const auto PWINDOW = g_pCompositor->vectorToWindowUnified(getMouseCoordsInternal(), RESERVED_EXTENTS | INPUT_EXTENTS | ALLOW_FLOATING);
 
             if (!PWINDOW) {
                 Debug::log(ERR, "Cannot kill invalid window!");
@@ -689,7 +709,7 @@ void CInputManager::onMouseWheel(wlr_pointer_axis_event* e) {
 
     if (!m_bLastFocusOnLS) {
         const auto MOUSECOORDS = g_pInputManager->getMouseCoordsInternal();
-        const auto PWINDOW     = g_pCompositor->vectorToWindowIdeal(MOUSECOORDS);
+        const auto PWINDOW     = g_pCompositor->vectorToWindowUnified(MOUSECOORDS, RESERVED_EXTENTS | INPUT_EXTENTS | ALLOW_FLOATING);
 
         if (PWINDOW && PWINDOW->checkInputOnDecos(INPUT_TYPE_AXIS, MOUSECOORDS, e))
             return;

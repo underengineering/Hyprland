@@ -226,10 +226,13 @@ void CHyprDwindleLayout::applyNodeDataToWindow(SDwindleNodeData* pNode, bool for
 
         g_pXWaylandManager->setWindowSize(PWINDOW, wb.size());
     } else {
-        PWINDOW->m_vRealSize     = calcSize;
-        PWINDOW->m_vRealPosition = calcPos;
+        CBox wb = {calcPos, calcSize};
+        wb.round(); // avoid rounding mess
 
-        g_pXWaylandManager->setWindowSize(PWINDOW, calcSize);
+        PWINDOW->m_vRealSize     = wb.size();
+        PWINDOW->m_vRealPosition = wb.pos();
+
+        g_pXWaylandManager->setWindowSize(PWINDOW, wb.size());
     }
 
     if (force) {
@@ -272,7 +275,7 @@ void CHyprDwindleLayout::onWindowCreatedTiling(CWindow* pWindow, eDirection dire
 
     if (PMONITOR->ID == MONFROMCURSOR->ID &&
         (PNODE->workspaceID == PMONITOR->activeWorkspace || (g_pCompositor->isWorkspaceSpecial(PNODE->workspaceID) && PMONITOR->specialWorkspaceID)) && !*PUSEACTIVE) {
-        OPENINGON = getNodeFromWindow(g_pCompositor->vectorToWindowTiled(MOUSECOORDS));
+        OPENINGON = getNodeFromWindow(g_pCompositor->vectorToWindowUnified(MOUSECOORDS, RESERVED_EXTENTS | INPUT_EXTENTS));
 
         if (!OPENINGON && g_pCompositor->isPointOnReservedArea(MOUSECOORDS, PMONITOR))
             OPENINGON = getClosestNodeOnWorkspace(PNODE->workspaceID, MOUSECOORDS);
@@ -282,7 +285,7 @@ void CHyprDwindleLayout::onWindowCreatedTiling(CWindow* pWindow, eDirection dire
             g_pCompositor->m_pLastWindow->m_iWorkspaceID == pWindow->m_iWorkspaceID && g_pCompositor->m_pLastWindow->m_bIsMapped) {
             OPENINGON = getNodeFromWindow(g_pCompositor->m_pLastWindow);
         } else {
-            OPENINGON = getNodeFromWindow(g_pCompositor->vectorToWindowTiled(MOUSECOORDS));
+            OPENINGON = getNodeFromWindow(g_pCompositor->vectorToWindowUnified(MOUSECOORDS, RESERVED_EXTENTS | INPUT_EXTENTS));
         }
 
         if (!OPENINGON && g_pCompositor->isPointOnReservedArea(MOUSECOORDS, PMONITOR))
@@ -645,8 +648,10 @@ void CHyprDwindleLayout::resizeActiveWindow(const Vector2D& pixResize, eRectCorn
             else
                 PWINDOW->m_vPseudoSize.y -= pixResize.y * 2;
 
-            PWINDOW->m_vPseudoSize.x = std::clamp(PWINDOW->m_vPseudoSize.x, 30.0, PNODE->box.w);
-            PWINDOW->m_vPseudoSize.y = std::clamp(PWINDOW->m_vPseudoSize.y, 30.0, PNODE->box.h);
+            CBox wbox = PNODE->box;
+            wbox.round();
+
+            PWINDOW->m_vPseudoSize = {std::clamp(PWINDOW->m_vPseudoSize.x, 30.0, wbox.w), std::clamp(PWINDOW->m_vPseudoSize.y, 30.0, wbox.h)};
 
             PWINDOW->m_vLastFloatingSize = PWINDOW->m_vPseudoSize;
             PNODE->recalcSizePosRecursive(*PANIMATE == 0);
@@ -991,6 +996,8 @@ std::any CHyprDwindleLayout::layoutMessage(SLayoutMessageHeader header, std::str
     const auto ARGS = CVarList(message, 0, ' ');
     if (ARGS[0] == "togglesplit") {
         toggleSplit(header.pWindow);
+    } else if (ARGS[0] == "swapsplit") {
+        swapSplit(header.pWindow);
     } else if (ARGS[0] == "preselect") {
         std::string direction = ARGS[1];
 
@@ -1040,6 +1047,20 @@ void CHyprDwindleLayout::toggleSplit(CWindow* pWindow) {
         return;
 
     PNODE->pParent->splitTop = !PNODE->pParent->splitTop;
+
+    PNODE->pParent->recalcSizePosRecursive();
+}
+
+void CHyprDwindleLayout::swapSplit(CWindow* pWindow) {
+    const auto PNODE = getNodeFromWindow(pWindow);
+
+    if (!PNODE || !PNODE->pParent)
+        return;
+
+    if (pWindow->m_bIsFullscreen)
+        return;
+
+    std::swap(PNODE->pParent->children[0], PNODE->pParent->children[1]);
 
     PNODE->pParent->recalcSizePosRecursive();
 }
