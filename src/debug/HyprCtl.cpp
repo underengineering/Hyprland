@@ -10,10 +10,10 @@
 #include <sys/utsname.h>
 #include <sys/un.h>
 #include <unistd.h>
-#include <errno.h>
 
 #include <sstream>
 #include <string>
+#include <typeindex>
 
 static void trimTrailingComma(std::string& str) {
     if (!str.empty() && str.back() == ',')
@@ -249,8 +249,12 @@ static std::string getWorkspaceRuleData(const SWorkspaceRule& r, eHyprCtlOutputF
         const std::string monitor    = r.monitor.empty() ? "" : std::format(",\n    \"monitor\": \"{}\"", escapeJSONStrings(r.monitor));
         const std::string default_   = (bool)(r.isDefault) ? std::format(",\n    \"default\": {}", boolToString(r.isDefault)) : "";
         const std::string persistent = (bool)(r.isPersistent) ? std::format(",\n    \"persistent\": {}", boolToString(r.isPersistent)) : "";
-        const std::string gapsIn     = (bool)(r.gapsIn) ? std::format(",\n    \"gapsIn\": {}", r.gapsIn.value()) : "";
-        const std::string gapsOut    = (bool)(r.gapsOut) ? std::format(",\n    \"gapsOut\": {}", r.gapsOut.value()) : "";
+        const std::string gapsIn     = (bool)(r.gapsIn) ?
+                std::format(",\n    \"gapsIn\": [{}, {}, {}, {}]", r.gapsIn.value().top, r.gapsIn.value().right, r.gapsIn.value().bottom, r.gapsIn.value().left) :
+                "";
+        const std::string gapsOut    = (bool)(r.gapsOut) ?
+               std::format(",\n    \"gapsOut\": [{}, {}, {}, {}]", r.gapsOut.value().top, r.gapsOut.value().right, r.gapsOut.value().bottom, r.gapsOut.value().left) :
+               "";
         const std::string borderSize = (bool)(r.borderSize) ? std::format(",\n    \"borderSize\": {}", r.borderSize.value()) : "";
         const std::string border     = (bool)(r.border) ? std::format(",\n    \"border\": {}", boolToString(r.border.value())) : "";
         const std::string rounding   = (bool)(r.rounding) ? std::format(",\n    \"rounding\": {}", boolToString(r.rounding.value())) : "";
@@ -267,8 +271,12 @@ static std::string getWorkspaceRuleData(const SWorkspaceRule& r, eHyprCtlOutputF
         const std::string monitor    = std::format("\tmonitor: {}\n", r.monitor.empty() ? "<unset>" : escapeJSONStrings(r.monitor));
         const std::string default_   = std::format("\tdefault: {}\n", (bool)(r.isDefault) ? boolToString(r.isDefault) : "<unset>");
         const std::string persistent = std::format("\tpersistent: {}\n", (bool)(r.isPersistent) ? boolToString(r.isPersistent) : "<unset>");
-        const std::string gapsIn     = std::format("\tgapsIn: {}\n", (bool)(r.gapsIn) ? std::to_string(r.gapsIn.value()) : "<unset>");
-        const std::string gapsOut    = std::format("\tgapsOut: {}\n", (bool)(r.gapsOut) ? std::to_string(r.gapsOut.value()) : "<unset>");
+        const std::string gapsIn     = (bool)(r.gapsIn) ? std::format("\tgapsIn: {} {} {} {}\n", std::to_string(r.gapsIn.value().top), std::to_string(r.gapsIn.value().right),
+                                                                      std::to_string(r.gapsIn.value().bottom), std::to_string(r.gapsIn.value().left)) :
+                                                          std::format("\tgapsIn: <unset>\n");
+        const std::string gapsOut    = (bool)(r.gapsOut) ? std::format("\tgapsOut: {} {} {} {}\n", std::to_string(r.gapsOut.value().top), std::to_string(r.gapsOut.value().right),
+                                                                       std::to_string(r.gapsOut.value().bottom), std::to_string(r.gapsOut.value().left)) :
+                                                           std::format("\tgapsOut: <unset>\n");
         const std::string borderSize = std::format("\tborderSize: {}\n", (bool)(r.borderSize) ? std::to_string(r.borderSize.value()) : "<unset>");
         const std::string border     = std::format("\tborder: {}\n", (bool)(r.border) ? boolToString(r.border.value()) : "<unset>");
         const std::string rounding   = std::format("\trounding: {}\n", (bool)(r.rounding) ? boolToString(r.rounding.value()) : "<unset>");
@@ -856,32 +864,35 @@ std::string dispatchKeyword(eHyprCtlOutputFormat format, std::string in) {
 
     const auto  VALUE = in.substr(in.find_first_of(' ') + 1);
 
-    std::string retval = g_pConfigManager->parseKeyword(COMMAND, VALUE, true);
+    std::string retval = g_pConfigManager->parseKeyword(COMMAND, VALUE);
 
-    if (COMMAND == "monitor")
+    // if we are executing a dynamic source we have to reload everything, so every if will have a check for source.
+    if (COMMAND == "monitor" || COMMAND == "source")
         g_pConfigManager->m_bWantsMonitorReload = true; // for monitor keywords
 
-    if (COMMAND.contains("input") || COMMAND.contains("device:")) {
+    if (COMMAND.contains("input") || COMMAND.contains("device") || COMMAND == "source") {
         g_pInputManager->setKeyboardLayout();     // update kb layout
         g_pInputManager->setPointerConfigs();     // update mouse cfgs
         g_pInputManager->setTouchDeviceConfigs(); // update touch device cfgs
         g_pInputManager->setTabletConfigs();      // update tablets
     }
 
-    if (COMMAND.contains("general:layout"))
-        g_pLayoutManager->switchToLayout(g_pConfigManager->getString("general:layout")); // update layout
+    static auto* const PLAYOUT = (Hyprlang::STRING const*)g_pConfigManager->getConfigValuePtr("general:layout");
 
-    if (COMMAND.contains("decoration:screen_shader"))
+    if (COMMAND.contains("general:layout"))
+        g_pLayoutManager->switchToLayout(*PLAYOUT); // update layout
+
+    if (COMMAND.contains("decoration:screen_shader") || COMMAND == "source")
         g_pHyprOpenGL->m_bReloadScreenShader = true;
 
-    if (COMMAND.contains("blur")) {
+    if (COMMAND.contains("blur") || COMMAND == "source") {
         for (auto& [m, rd] : g_pHyprOpenGL->m_mMonitorRenderResources) {
             rd.blurFBDirty = true;
         }
     }
 
     // decorations will probably need a repaint
-    if (COMMAND.contains("decoration:") || COMMAND.contains("border") || COMMAND == "workspace" || COMMAND.contains("cursor_zoom_factor")) {
+    if (COMMAND.contains("decoration:") || COMMAND.contains("border") || COMMAND == "workspace" || COMMAND.contains("cursor_zoom_factor") || COMMAND == "source") {
         for (auto& m : g_pCompositor->m_vMonitors) {
             g_pHyprRenderer->damageMonitor(m.get());
             g_pLayoutManager->getCurrentLayout()->recalculateMonitor(m->ID);
@@ -1193,28 +1204,40 @@ std::string dispatchGetOption(eHyprCtlOutputFormat format, std::string request) 
     nextItem();
     nextItem();
 
-    const auto PCFGOPT = g_pConfigManager->getConfigValuePtrSafe(curitem);
+    const auto VAR = g_pConfigManager->getHyprlangConfigValuePtr(curitem);
 
-    if (!PCFGOPT)
+    if (!VAR)
         return "no such option";
 
-    if (format == eHyprCtlOutputFormat::FORMAT_NORMAL)
-        return std::format("option {}\n\tint: {}\n\tfloat: {:.5f}\n\tstr: \"{}\"\n\tdata: {:x}\n\tset: {}", curitem, PCFGOPT->intValue, PCFGOPT->floatValue, PCFGOPT->strValue,
-                           (uintptr_t)PCFGOPT->data.get(), PCFGOPT->set);
-    else {
-        return std::format(
-            R"#(
-{{
-    "option": "{}",
-    "int": {},
-    "float": {:.5f},
-    "str": "{}",
-    "data": "0x{:x}",
-    "set": {}
-}}
-)#",
-            curitem, PCFGOPT->intValue, PCFGOPT->floatValue, PCFGOPT->strValue, (uintptr_t)PCFGOPT->data.get(), PCFGOPT->set);
+    const auto VAL  = VAR->getValue();
+    const auto TYPE = std::type_index(VAL.type());
+
+    if (format == FORMAT_NORMAL) {
+        if (TYPE == typeid(Hyprlang::INT))
+            return std::format("int: {}\nset: {}", std::any_cast<Hyprlang::INT>(VAL), VAR->m_bSetByUser);
+        else if (TYPE == typeid(Hyprlang::FLOAT))
+            return std::format("float: {:2f}\nset: {}", std::any_cast<Hyprlang::FLOAT>(VAL), VAR->m_bSetByUser);
+        else if (TYPE == typeid(Hyprlang::VEC2))
+            return std::format("vec2: [{}, {}]\nset: {}", std::any_cast<Hyprlang::VEC2>(VAL).x, std::any_cast<Hyprlang::VEC2>(VAL).y, VAR->m_bSetByUser);
+        else if (TYPE == typeid(Hyprlang::STRING))
+            return std::format("str: {}\nset: {}", std::any_cast<Hyprlang::STRING>(VAL), VAR->m_bSetByUser);
+        else if (TYPE == typeid(Hyprlang::CUSTOMTYPE*))
+            return std::format("custom type at: {:x}\nset: {}", (uintptr_t)std::any_cast<Hyprlang::CUSTOMTYPE*>(VAL), VAR->m_bSetByUser);
+    } else {
+        if (TYPE == typeid(Hyprlang::INT))
+            return std::format("{{\"option\": \"{}\", \"int\": {}, \"set\": {} }}", curitem, std::any_cast<Hyprlang::INT>(VAL), VAR->m_bSetByUser);
+        else if (TYPE == typeid(Hyprlang::FLOAT))
+            return std::format("{{\"option\": \"{}\", \"float\": {:2f}, \"set\": {} }}", curitem, std::any_cast<Hyprlang::FLOAT>(VAL), VAR->m_bSetByUser);
+        else if (TYPE == typeid(Hyprlang::VEC2))
+            return std::format("{{\"option\": \"{}\", \"vec2\": [{},{}], \"set\": {} }}", curitem, std::any_cast<Hyprlang::VEC2>(VAL).x, std::any_cast<Hyprlang::VEC2>(VAL).y,
+                               VAR->m_bSetByUser);
+        else if (TYPE == typeid(Hyprlang::STRING))
+            return std::format("{{\"option\": \"{}\", \"str\": \"{}\", \"set\": {} }}", curitem, escapeJSONStrings(std::any_cast<Hyprlang::STRING>(VAL)), VAR->m_bSetByUser);
+        else if (TYPE == typeid(Hyprlang::CUSTOMTYPE*))
+            return std::format("{{\"option\": \"{}\", \"custom\": \"{:x}\", \"set\": {} }}", curitem, (uintptr_t)std::any_cast<Hyprlang::CUSTOMTYPE*>(VAL), VAR->m_bSetByUser);
     }
+
+    return "invalid type (internal error)";
 }
 
 std::string decorationRequest(eHyprCtlOutputFormat format, std::string request) {

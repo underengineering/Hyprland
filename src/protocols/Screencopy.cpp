@@ -347,7 +347,7 @@ void CScreencopyProtocolManager::copyFrame(wl_client* client, wl_resource* resou
         g_pHyprRenderer->m_bSoftwareCursorsLocked = true;
 
     if (!PFRAME->withDamage)
-        g_pCompositor->scheduleFrameForMonitor(PFRAME->pMonitor);
+        g_pHyprRenderer->damageMonitor(PFRAME->pMonitor);
 }
 
 void CScreencopyProtocolManager::onOutputCommit(CMonitor* pMonitor, wlr_output_event_commit* e) {
@@ -431,16 +431,19 @@ void CScreencopyProtocolManager::sendFrameDamage(SScreencopyFrame* frame) {
     if (!frame->withDamage)
         return;
 
-    for (auto& RECT : frame->pMonitor->lastFrameDamage.getRects()) {
+    // TODO:
+    // add a damage ring for this.
 
-        if (frame->buffer->width < 1 || frame->buffer->height < 1 || frame->buffer->width - RECT.x1 < 1 || frame->buffer->height - RECT.y1 < 1) {
-            Debug::log(ERR, "[sc] Failed to send damage");
-            break;
-        }
+    // for (auto& RECT : frame->pMonitor->lastFrameDamage.getRects()) {
 
-        zwlr_screencopy_frame_v1_send_damage(frame->resource, std::clamp(RECT.x1, 0, frame->buffer->width), std::clamp(RECT.y1, 0, frame->buffer->height),
-                                             std::clamp(RECT.x2 - RECT.x1, 0, frame->buffer->width - RECT.x1), std::clamp(RECT.y2 - RECT.y1, 0, frame->buffer->height - RECT.y1));
-    }
+    //     if (frame->buffer->width < 1 || frame->buffer->height < 1 || frame->buffer->width - RECT.x1 < 1 || frame->buffer->height - RECT.y1 < 1) {
+    //         Debug::log(ERR, "[sc] Failed to send damage");
+    //         break;
+    //     }
+
+    //     zwlr_screencopy_frame_v1_send_damage(frame->resource, std::clamp(RECT.x1, 0, frame->buffer->width), std::clamp(RECT.y1, 0, frame->buffer->height),
+    //                                          std::clamp(RECT.x2 - RECT.x1, 0, frame->buffer->width - RECT.x1), std::clamp(RECT.y2 - RECT.y1, 0, frame->buffer->height - RECT.y1));
+    // }
 }
 
 bool CScreencopyProtocolManager::copyFrameShm(SScreencopyFrame* frame, timespec* now) {
