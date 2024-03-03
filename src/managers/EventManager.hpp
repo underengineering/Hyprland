@@ -2,9 +2,7 @@
 #include <fstream>
 #include <vector>
 #include <mutex>
-
-#include "../defines.hpp"
-#include "../helpers/MiscFunctions.hpp"
+#include <thread>
 
 struct SHyprIPCEvent {
     std::string event;
@@ -27,14 +25,9 @@ class CEventManager {
     int         onFDWrite(int fd, uint32_t mask);
 
   private:
-    void                                         flushEvents();
+    std::vector<std::pair<int, wl_event_source*>> m_vAcceptedSocketFDs;
 
-    std::mutex                                   eventQueueMutex;
-    std::deque<SHyprIPCEvent>                    m_dQueuedEvents;
-
-    std::deque<std::pair<int, wl_event_source*>> m_dAcceptedSocketFDs;
-
-    wl_event_source*                             m_pEventSource = nullptr;
+    wl_event_source*                              m_pEventSource = nullptr;
 };
 
 inline std::unique_ptr<CEventManager> g_pEventManager;

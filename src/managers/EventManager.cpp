@@ -66,7 +66,7 @@ int CEventManager::onSocket2Write(int fd, uint32_t mask) {
         Debug::log(LOG, "Socket2 accepted a new client at FD {}", ACCEPTEDCONNECTION);
 
         // add to event loop so we can close it when we need to
-        m_dAcceptedSocketFDs.push_back(
+        m_vAcceptedSocketFDs.push_back(
             std::make_pair<>(ACCEPTEDCONNECTION, wl_event_loop_add_fd(g_pCompositor->m_sWLEventLoop, ACCEPTEDCONNECTION, WL_EVENT_READABLE, fdHandleWrite, this)));
     } else {
         Debug::log(ERR, "Socket2 failed receiving connection, errno: {}", errno);
@@ -78,10 +78,10 @@ int CEventManager::onSocket2Write(int fd, uint32_t mask) {
 
 int CEventManager::onFDWrite(int fd, uint32_t mask) {
     auto removeFD = [this](int fd) -> void {
-        for (auto it = m_dAcceptedSocketFDs.begin(); it != m_dAcceptedSocketFDs.end();) {
+        for (auto it = m_vAcceptedSocketFDs.begin(); it != m_vAcceptedSocketFDs.end();) {
             if (it->first == fd) {
                 wl_event_source_remove(it->second); // remove this fd listener
-                it = m_dAcceptedSocketFDs.erase(it);
+                it = m_vAcceptedSocketFDs.erase(it);
             } else {
                 it++;
             }
@@ -112,56 +112,6 @@ int CEventManager::onFDWrite(int fd, uint32_t mask) {
     }
 
     return 0;
-}
-
-void CEventManager::startThread() {
-    m_tThread = std::thread([&]() {
-        const auto SOCKET = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
-
-        if (SOCKET < 0) {
-            Debug::log(ERR, "Couldn't start the Hyprland Socket 2. (1) IPC will not work.");
-            return;
-        }
-
-        sockaddr_un SERVERADDRESS = {.sun_family = AF_UNIX};
-        std::string socketPath    = "/tmp/hypr/" + g_pCompositor->m_szInstanceSignature + "/.socket2.sock";
-        strncpy(SERVERADDRESS.sun_path, socketPath.c_str(), sizeof(SERVERADDRESS.sun_path) - 1);
-
-        if (bind(SOCKET, (sockaddr*)&SERVERADDRESS, SUN_LEN(&SERVERADDRESS)) < 0) {
-            Debug::log(ERR, "Failed to bind Socket 2");
-            close(SOCKET);
-            return;
-        }
-
-        // 10 max queued.
-        listen(SOCKET, 10);
-
-        sockaddr_in clientAddress;
-        socklen_t   clientSize = sizeof(clientAddress);
-
-        Debug::log(LOG, "Hypr socket 2 started at {}", socketPath);
-
-        while (1) {
-            const auto ACCEPTEDCONNECTION = accept4(SOCKET, (sockaddr*)&clientAddress, &clientSize, SOCK_CLOEXEC);
-
-            if (ACCEPTEDCONNECTION > 0) {
-                // new connection!
-
-                int flagsNew = fcntl(ACCEPTEDCONNECTION, F_GETFL, 0);
-                fcntl(ACCEPTEDCONNECTION, F_SETFL, flagsNew | O_NONBLOCK);
-
-                Debug::log(LOG, "Socket 2 accepted a new client at FD {}", ACCEPTEDCONNECTION);
-
-                // add to event loop so we can close it when we need to
-                m_vAcceptedSocketFDs.push_back(
-                    {ACCEPTEDCONNECTION, wl_event_loop_add_fd(g_pCompositor->m_sWLEventLoop, ACCEPTEDCONNECTION, WL_EVENT_READABLE, fdHandleWrite, &m_vAcceptedSocketFDs)});
-            }
-        }
-
-        close(SOCKET);
-    });
-
-    m_tThread.detach();
 }
 
 void CEventManager::postEvent(const SHyprIPCEvent event) {
