@@ -14,8 +14,8 @@ CWorkspace::CWorkspace(int monitorID, std::string name, bool special) {
     m_bIsSpecialWorkspace = special;
 
     m_vRenderOffset.m_pWorkspace = this;
-    m_vRenderOffset.create(AVARTYPE_VECTOR, special ? g_pConfigManager->getAnimationPropertyConfig("specialWorkspace") : g_pConfigManager->getAnimationPropertyConfig("workspaces"),
-                           nullptr, AVARDAMAGE_ENTIRE);
+    m_vRenderOffset.create(special ? g_pConfigManager->getAnimationPropertyConfig("specialWorkspace") : g_pConfigManager->getAnimationPropertyConfig("workspaces"), nullptr,
+                           AVARDAMAGE_ENTIRE);
     m_fAlpha.m_pWorkspace = this;
     m_fAlpha.create(AVARTYPE_FLOAT, special ? g_pConfigManager->getAnimationPropertyConfig("specialWorkspace") : g_pConfigManager->getAnimationPropertyConfig("workspaces"),
                     nullptr, AVARDAMAGE_ENTIRE);
@@ -23,6 +23,10 @@ CWorkspace::CWorkspace(int monitorID, std::string name, bool special) {
 
     m_vRenderOffset.registerVar();
     m_fAlpha.registerVar();
+
+    const auto RULEFORTHIS = g_pConfigManager->getWorkspaceRuleFor(this);
+    if (RULEFORTHIS.defaultName.has_value())
+        m_szName = RULEFORTHIS.defaultName.value();
 
     g_pEventManager->postEvent({"createworkspace", m_szName});
     EMIT_HOOK_EVENT("createWorkspace", this);

@@ -168,7 +168,7 @@ bool CHyprOpenGLImpl::passRequiresIntrospection(CMonitor* pMonitor) {
             if (!ws->m_bIsSpecialWorkspace || ws->m_iMonitorID != pMonitor->ID)
                 continue;
 
-            if (ws->m_fAlpha.fl() == 0)
+            if (ws->m_fAlpha.value() == 0)
                 continue;
 
             return true;
@@ -353,7 +353,11 @@ void CHyprOpenGLImpl::end() {
     // check for gl errors
     const GLenum ERR = glGetError();
 
+#ifdef GLES2
+    if (ERR == GL_CONTEXT_LOST_KHR) /* We don't have infra to recover from this */
+#else
     if (ERR == GL_CONTEXT_LOST) /* We don't have infra to recover from this */
+#endif
         RASSERT(false, "glGetError at Opengl::end() returned GL_CONTEXT_LOST. Cannot continue until proper GPU reset handling is implemented.");
 }
 
@@ -881,7 +885,7 @@ void CHyprOpenGLImpl::renderTextureInternalWithDamage(const CTexture& tex, CBox*
 
         if (allowDim && m_pCurrentWindow && **PDIMINACTIVE) {
             glUniform1i(shader->applyTint, 1);
-            const auto DIM = m_pCurrentWindow->m_fDimPercent.fl();
+            const auto DIM = m_pCurrentWindow->m_fDimPercent.value();
             glUniform3f(shader->tint, 1.f - DIM, 1.f - DIM, 1.f - DIM);
         } else {
             glUniform1i(shader->applyTint, 0);
@@ -1292,7 +1296,7 @@ void CHyprOpenGLImpl::preRender(CMonitor* pMonitor) {
         const auto  PSURFACE = pWindow->m_pWLSurface.wlr();
 
         const auto  PWORKSPACE = g_pCompositor->getWorkspaceByID(pWindow->m_iWorkspaceID);
-        const float A          = pWindow->m_fAlpha.fl() * pWindow->m_fActiveInactiveAlpha.fl() * PWORKSPACE->m_fAlpha.fl();
+        const float A          = pWindow->m_fAlpha.value() * pWindow->m_fActiveInactiveAlpha.value() * PWORKSPACE->m_fAlpha.value();
 
         if (A >= 1.f) {
             if (PSURFACE->opaque)
@@ -1330,7 +1334,7 @@ void CHyprOpenGLImpl::preRender(CMonitor* pMonitor) {
                 if (!ls->layerSurface || ls->xray != 1)
                     continue;
 
-                if (ls->layerSurface->surface->opaque && ls->alpha.fl() >= 1.f)
+                if (ls->layerSurface->surface->opaque && ls->alpha.value() >= 1.f)
                     continue;
 
                 hasWindows = true;
@@ -1773,25 +1777,25 @@ void CHyprOpenGLImpl::renderSnapshot(CWindow** pWindow) {
     CBox       windowBox;
     // some mafs to figure out the correct box
     // the originalClosedPos is relative to the monitor's pos
-    Vector2D scaleXY = Vector2D((PMONITOR->scale * PWINDOW->m_vRealSize.vec().x / (PWINDOW->m_vOriginalClosedSize.x * PMONITOR->scale)),
-                                (PMONITOR->scale * PWINDOW->m_vRealSize.vec().y / (PWINDOW->m_vOriginalClosedSize.y * PMONITOR->scale)));
+    Vector2D scaleXY = Vector2D((PMONITOR->scale * PWINDOW->m_vRealSize.value().x / (PWINDOW->m_vOriginalClosedSize.x * PMONITOR->scale)),
+                                (PMONITOR->scale * PWINDOW->m_vRealSize.value().y / (PWINDOW->m_vOriginalClosedSize.y * PMONITOR->scale)));
 
     windowBox.width  = PMONITOR->vecTransformedSize.x * scaleXY.x;
     windowBox.height = PMONITOR->vecTransformedSize.y * scaleXY.y;
-    windowBox.x      = ((PWINDOW->m_vRealPosition.vec().x - PMONITOR->vecPosition.x) * PMONITOR->scale) - ((PWINDOW->m_vOriginalClosedPos.x * PMONITOR->scale) * scaleXY.x);
-    windowBox.y      = ((PWINDOW->m_vRealPosition.vec().y - PMONITOR->vecPosition.y) * PMONITOR->scale) - ((PWINDOW->m_vOriginalClosedPos.y * PMONITOR->scale) * scaleXY.y);
+    windowBox.x      = ((PWINDOW->m_vRealPosition.value().x - PMONITOR->vecPosition.x) * PMONITOR->scale) - ((PWINDOW->m_vOriginalClosedPos.x * PMONITOR->scale) * scaleXY.x);
+    windowBox.y      = ((PWINDOW->m_vRealPosition.value().y - PMONITOR->vecPosition.y) * PMONITOR->scale) - ((PWINDOW->m_vOriginalClosedPos.y * PMONITOR->scale) * scaleXY.y);
 
     CRegion fakeDamage{0, 0, PMONITOR->vecTransformedSize.x, PMONITOR->vecTransformedSize.y};
 
     if (**PDIMAROUND && (*pWindow)->m_sAdditionalConfigData.dimAround) {
         CBox monbox = {0, 0, g_pHyprOpenGL->m_RenderData.pMonitor->vecPixelSize.x, g_pHyprOpenGL->m_RenderData.pMonitor->vecPixelSize.y};
-        g_pHyprOpenGL->renderRect(&monbox, CColor(0, 0, 0, **PDIMAROUND * PWINDOW->m_fAlpha.fl()));
+        g_pHyprOpenGL->renderRect(&monbox, CColor(0, 0, 0, **PDIMAROUND * PWINDOW->m_fAlpha.value()));
         g_pHyprRenderer->damageMonitor(PMONITOR);
     }
 
     m_bEndFrame = true;
 
-    renderTextureInternalWithDamage(it->second.m_cTex, &windowBox, PWINDOW->m_fAlpha.fl(), &fakeDamage, 0);
+    renderTextureInternalWithDamage(it->second.m_cTex, &windowBox, PWINDOW->m_fAlpha.value(), &fakeDamage, 0);
 
     m_bEndFrame = false;
 }
@@ -1812,13 +1816,22 @@ void CHyprOpenGLImpl::renderSnapshot(SLayerSurface** pLayer) {
 
     const auto PMONITOR = g_pCompositor->getMonitorFromID(PLAYER->monitorID);
 
-    CBox       monbox = {0, 0, PMONITOR->vecTransformedSize.x, PMONITOR->vecTransformedSize.y};
+    CBox       layerBox;
+    // some mafs to figure out the correct box
+    // the originalClosedPos is relative to the monitor's pos
+    Vector2D scaleXY = Vector2D((PMONITOR->scale * PLAYER->realSize.value().x / (PLAYER->geometry.w * PMONITOR->scale)),
+                                (PMONITOR->scale * PLAYER->realSize.value().y / (PLAYER->geometry.h * PMONITOR->scale)));
 
-    CRegion    fakeDamage{0, 0, PMONITOR->vecTransformedSize.x, PMONITOR->vecTransformedSize.y};
+    layerBox.width  = PMONITOR->vecTransformedSize.x * scaleXY.x;
+    layerBox.height = PMONITOR->vecTransformedSize.y * scaleXY.y;
+    layerBox.x = ((PLAYER->realPosition.value().x - PMONITOR->vecPosition.x) * PMONITOR->scale) - (((PLAYER->geometry.x - PMONITOR->vecPosition.x) * PMONITOR->scale) * scaleXY.x);
+    layerBox.y = ((PLAYER->realPosition.value().y - PMONITOR->vecPosition.y) * PMONITOR->scale) - (((PLAYER->geometry.y - PMONITOR->vecPosition.y) * PMONITOR->scale) * scaleXY.y);
+
+    CRegion fakeDamage{0, 0, PMONITOR->vecTransformedSize.x, PMONITOR->vecTransformedSize.y};
 
     m_bEndFrame = true;
 
-    renderTextureInternalWithDamage(it->second.m_cTex, &monbox, PLAYER->alpha.fl(), &fakeDamage, 0);
+    renderTextureInternalWithDamage(it->second.m_cTex, &layerBox, PLAYER->alpha.value(), &fakeDamage, 0);
 
     m_bEndFrame = false;
 }
@@ -2048,9 +2061,15 @@ void CHyprOpenGLImpl::createBGTextureForMonitor(CMonitor* pMonitor) {
     tex.m_vSize = IMAGESIZE * scale;
 
     // copy the data to an OpenGL texture we have
-    const GLint glIFormat = CAIROFORMAT == CAIRO_FORMAT_RGB96F ? GL_RGB32F : GL_RGBA;
-    const GLint glFormat  = CAIROFORMAT == CAIRO_FORMAT_RGB96F ? GL_RGB : GL_RGBA;
-    const GLint glType    = CAIROFORMAT == CAIRO_FORMAT_RGB96F ? GL_FLOAT : GL_UNSIGNED_BYTE;
+    const GLint glIFormat = CAIROFORMAT == CAIRO_FORMAT_RGB96F ?
+#ifdef GLES2
+        GL_RGB32F_EXT :
+#else
+        GL_RGB32F :
+#endif
+        GL_RGBA;
+    const GLint glFormat = CAIROFORMAT == CAIRO_FORMAT_RGB96F ? GL_RGB : GL_RGBA;
+    const GLint glType   = CAIROFORMAT == CAIRO_FORMAT_RGB96F ? GL_FLOAT : GL_UNSIGNED_BYTE;
 
     const auto  DATA = cairo_image_surface_get_data(CAIROSURFACE);
     glBindTexture(GL_TEXTURE_2D, tex.m_iTexID);
@@ -2154,7 +2173,7 @@ void CHyprOpenGLImpl::bindBackOnMain() {
 }
 
 void CHyprOpenGLImpl::setMonitorTransformEnabled(bool enabled) {
-    m_bEndFrame = !enabled;
+    m_bEndFrame = enabled;
 }
 
 inline const SGLPixelFormat GLES2_FORMATS[] = {

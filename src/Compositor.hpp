@@ -21,7 +21,7 @@
 #include "debug/HyprDebugOverlay.hpp"
 #include "debug/HyprNotificationOverlay.hpp"
 #include "helpers/Monitor.hpp"
-#include "helpers/Workspace.hpp"
+#include "desktop/Workspace.hpp"
 #include "Window.hpp"
 #include "render/Renderer.hpp"
 #include "render/OpenGL.hpp"
@@ -93,9 +93,7 @@ class CCompositor {
     std::vector<std::shared_ptr<CMonitor>>    m_vMonitors;
     std::vector<std::shared_ptr<CMonitor>>    m_vRealMonitors; // for all monitors, even those turned off
     std::vector<std::unique_ptr<CWindow>>     m_vWindows;
-    std::vector<std::unique_ptr<SXDGPopup>>   m_vXDGPopups;
     std::vector<std::unique_ptr<CWorkspace>>  m_vWorkspaces;
-    std::vector<std::unique_ptr<SSubsurface>> m_vSubsurfaces;
     std::vector<CWindow*>                     m_vWindowsFadingOut;
     std::vector<SLayerSurface*>               m_vSurfacesFadingOut;
 
@@ -143,7 +141,6 @@ class CCompositor {
     Vector2D       vectorToSurfaceLocal(const Vector2D&, CWindow*, wlr_surface*);
     CMonitor*      getMonitorFromOutput(wlr_output*);
     CMonitor*      getRealMonitorFromOutput(wlr_output*);
-    CWindow*       getWindowForPopup(wlr_xdg_popup*);
     CWindow*       getWindowFromSurface(wlr_surface*);
     CWindow*       getWindowFromHandle(uint32_t);
     CWindow*       getWindowFromZWLRHandle(wl_resource*);
@@ -169,8 +166,8 @@ class CCompositor {
     int            getNextAvailableNamedWorkspace();
     bool           isPointOnAnyMonitor(const Vector2D&);
     bool           isPointOnReservedArea(const Vector2D& point, const CMonitor* monitor = nullptr);
-    CWindow*       getConstraintWindow(SMouse*);
     CMonitor*      getMonitorInDirection(const char&);
+    CMonitor*      getMonitorInDirection(CMonitor*, const char&);
     void           updateAllWindowsAnimatedDecorationValues();
     void           updateWorkspaceWindows(const int64_t& id);
     void           updateWindowAnimatedDecorationValues(CWindow*);

@@ -33,6 +33,7 @@ commands:
     cursorpos
     decorations
     devices
+    dismissnotify
     dispatch
     getoption
     globalshortcuts
@@ -58,6 +59,7 @@ commands:
 
 flags:
     -j -> output in JSON
+    -r -> refresh state after issuing command (e.g. for updating variables)
     --batch -> execute a batch of commands, separated by ';'
     --instance (-i) -> use a specific instance. Can be either signature or index in hyprctl instances (0, 1, etc)
 )#";
@@ -78,7 +80,7 @@ std::vector<SInstanceData> instances() {
     std::vector<SInstanceData> result;
 
     for (const auto& el : std::filesystem::directory_iterator("/tmp/hypr")) {
-        if (el.is_directory())
+        if (el.is_directory() || !el.path().string().ends_with(".lock"))
             continue;
 
         // read lock
@@ -88,7 +90,7 @@ std::vector<SInstanceData> instances() {
 
         try {
             data->time = std::stoull(data->id.substr(data->id.find_first_of('_') + 1));
-        } catch (std::exception& e) { data->time = 0; }
+        } catch (std::exception& e) { continue; }
 
         // read file
         std::ifstream ifs(el.path().string());
@@ -98,7 +100,7 @@ std::vector<SInstanceData> instances() {
             if (i == 0) {
                 try {
                     data->pid = std::stoull(line);
-                } catch (std::exception& e) { data->pid = 0; }
+                } catch (std::exception& e) { continue; }
             } else if (i == 1) {
                 data->wlSocket = line;
             } else
@@ -305,6 +307,8 @@ int main(int argc, char** argv) {
             if (ARGS[i] == "-j" && !fullArgs.contains("j")) {
                 fullArgs += "j";
                 json = true;
+            } else if (ARGS[i] == "-r" && !fullArgs.contains("r")) {
+                fullArgs += "r";
             } else if (ARGS[i] == "--batch") {
                 fullRequest = "--batch ";
             } else if (ARGS[i] == "--instance" || ARGS[i] == "-i") {
@@ -364,7 +368,7 @@ int main(int argc, char** argv) {
         const auto ISIG = getenv("HYPRLAND_INSTANCE_SIGNATURE");
 
         if (!ISIG) {
-            std::cout << "HYPRLAND_INSTANCE_SIGNATURE not set! (is hyprland running?)";
+            std::cout << "HYPRLAND_INSTANCE_SIGNATURE not set! (is hyprland running?)\n";
             return 1;
         }
 
@@ -385,6 +389,8 @@ int main(int argc, char** argv) {
         request(fullRequest, 3);
     else if (fullRequest.contains("/plugin"))
         request(fullRequest, 1);
+    else if (fullRequest.contains("/dismissnotify"))
+        request(fullRequest, 0);
     else if (fullRequest.contains("/notify"))
         request(fullRequest, 2);
     else if (fullRequest.contains("/output"))

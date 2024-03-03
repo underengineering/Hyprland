@@ -4,7 +4,7 @@
 #include <ranges>
 
 CInputManager::~CInputManager() {
-    m_lConstraints.clear();
+    m_vConstraints.clear();
     m_lKeyboards.clear();
     m_lMice.clear();
     m_lTablets.clear();
@@ -56,7 +56,7 @@ void CInputManager::simulateMouseMovement() {
 }
 
 void CInputManager::sendMotionEventsToFocused() {
-    if (!g_pCompositor->m_pLastFocus)
+    if (!g_pCompositor->m_pLastFocus || isConstrained())
         return;
 
     // todo: this sucks ass
@@ -66,7 +66,7 @@ void CInputManager::sendMotionEventsToFocused() {
     timespec   now;
     clock_gettime(CLOCK_MONOTONIC, &now);
 
-    const auto LOCAL = getMouseCoordsInternal() - (PWINDOW ? PWINDOW->m_vRealPosition.goalv() : (PLS ? Vector2D{PLS->geometry.x, PLS->geometry.y} : Vector2D{}));
+    const auto LOCAL = getMouseCoordsInternal() - (PWINDOW ? PWINDOW->m_vRealPosition.goal() : (PLS ? Vector2D{PLS->geometry.x, PLS->geometry.y} : Vector2D{}));
 
     wlr_seat_pointer_notify_enter(g_pCompositor->m_sSeat.seat, g_pCompositor->m_pLastFocus, LOCAL.x, LOCAL.y);
     wlr_seat_pointer_notify_motion(g_pCompositor->m_sSeat.seat, now.tv_sec * 1000 + now.tv_nsec / 10000000, LOCAL.x, LOCAL.y);
@@ -134,61 +134,32 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
 
     if (forcedFocus) {
         pFoundWindow = forcedFocus;
-        surfacePos   = pFoundWindow->m_vRealPosition.vec();
+        surfacePos   = pFoundWindow->m_vRealPosition.value();
         foundSurface = pFoundWindow->m_pWLSurface.wlr();
     }
 
     // constraints
-    // All constraints TODO: multiple mice?
-    if (g_pCompositor->m_sSeat.mouse && g_pCompositor->m_sSeat.mouse->currentConstraint && !g_pCompositor->m_sSeat.exclusiveClient && !g_pSessionLockManager->isSessionLocked()) {
-        // XWayland windows sometimes issue constraints weirdly.
-        // TODO: We probably should search their parent. wlr_xwayland_surface->parent
-        const auto CONSTRAINTWINDOW = g_pCompositor->getConstraintWindow(g_pCompositor->m_sSeat.mouse);
-        const auto PCONSTRAINT      = constraintFromWlr(g_pCompositor->m_sSeat.mouse->currentConstraint);
+    if (g_pCompositor->m_sSeat.mouse && isConstrained()) {
+        const auto SURF       = CWLSurface::surfaceFromWlr(g_pCompositor->m_pLastFocus);
+        const auto CONSTRAINT = SURF->constraint();
 
-        if (!CONSTRAINTWINDOW || !PCONSTRAINT) {
-            unconstrainMouse();
-        } else {
-            // Native Wayland apps know how 2 constrain themselves.
-            // XWayland, we just have to accept them. Might cause issues, but thats XWayland for ya.
-            const auto CONSTRAINTPOS  = PCONSTRAINT->getLogicConstraintPos();
-            const auto CONSTRAINTSIZE = PCONSTRAINT->getLogicConstraintSize();
-
-            if (g_pCompositor->m_sSeat.mouse->currentConstraint->type == WLR_POINTER_CONSTRAINT_V1_LOCKED) {
-                // we just snap the cursor to where it should be.
-
-                if (PCONSTRAINT->hintSet)
-                    wlr_cursor_warp_closest(g_pCompositor->m_sWLRCursor, g_pCompositor->m_sSeat.mouse->mouse, CONSTRAINTPOS.x + PCONSTRAINT->positionHint.x,
-                                            CONSTRAINTPOS.y + PCONSTRAINT->positionHint.y);
-
-                return; // don't process anything else, the cursor is locked. The surface should not receive any further events.
-                        // these are usually FPS games. They will use the relative motion.
+        if (SURF && CONSTRAINT) {
+            if (CONSTRAINT->isLocked()) {
+                const auto HINT = CONSTRAINT->logicPositionHint();
+                wlr_cursor_warp(g_pCompositor->m_sWLRCursor, nullptr, HINT.x, HINT.y);
             } else {
-                // we restrict the cursor to the confined region
-                const auto REGION = PCONSTRAINT->getLogicCoordsRegion();
+                const auto RG           = CONSTRAINT->logicConstraintRegion();
+                const auto CLOSEST      = RG.closestPoint(mouseCoords);
+                const auto BOX          = SURF->getSurfaceBoxGlobal();
+                const auto CLOSESTLOCAL = CLOSEST - (BOX.has_value() ? BOX->pos() : Vector2D{});
 
-                if (!REGION.containsPoint(mouseCoords)) {
-                    if (g_pCompositor->m_sSeat.mouse->constraintActive) {
-                        const auto CLOSEST = REGION.closestPoint(mouseCoords);
-                        wlr_cursor_warp_closest(g_pCompositor->m_sWLRCursor, NULL, CLOSEST.x, CLOSEST.y);
-                        mouseCoords = getMouseCoordsInternal();
-                    }
-                } else {
-                    if ((!CONSTRAINTWINDOW->m_bIsX11 && PMONITOR && CONSTRAINTWINDOW->m_iWorkspaceID == PMONITOR->activeWorkspace) || (CONSTRAINTWINDOW->m_bIsX11)) {
-                        g_pCompositor->m_sSeat.mouse->constraintActive = true;
-                    }
-                }
+                wlr_cursor_warp(g_pCompositor->m_sWLRCursor, nullptr, CLOSEST.x, CLOSEST.y);
             }
 
-            if (CONSTRAINTWINDOW->m_bIsX11) {
-                foundSurface = CONSTRAINTWINDOW->m_pWLSurface.wlr();
-                surfacePos   = CONSTRAINTWINDOW->m_vRealPosition.vec();
-            } else {
-                g_pCompositor->vectorWindowToSurface(mouseCoords, CONSTRAINTWINDOW, surfaceCoords);
-            }
+            return;
 
-            pFoundWindow = CONSTRAINTWINDOW;
-        }
+        } else
+            Debug::log(ERR, "BUG THIS: Null SURF/CONSTRAINT in mouse refocus. Ignoring constraints. {:x} {:x}", (uintptr_t)SURF, (uintptr_t)CONSTRAINT);
     }
 
     // update stuff
@@ -273,7 +244,7 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
             surfacePos   = Vector2D(-1337, -1337);
         } else {
             foundSurface = pFoundWindow->m_pWLSurface.wlr();
-            surfacePos   = pFoundWindow->m_vRealPosition.vec();
+            surfacePos   = pFoundWindow->m_vRealPosition.value();
         }
     }
 
@@ -302,7 +273,7 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus) {
                 foundSurface = g_pCompositor->vectorWindowToSurface(mouseCoords, pFoundWindow, surfaceCoords);
             } else {
                 foundSurface = pFoundWindow->m_pWLSurface.wlr();
-                surfacePos   = pFoundWindow->m_vRealPosition.vec();
+                surfacePos   = pFoundWindow->m_vRealPosition.value();
             }
         }
     }
@@ -626,7 +597,7 @@ void CInputManager::processMouseDownNormal(wlr_pointer_button_event* e) {
     // TODO detect click on LS properly
     if (**PRESIZEONBORDER && !m_bLastFocusOnLS && e->state == WLR_BUTTON_PRESSED) {
         if (w && !w->m_bIsFullscreen) {
-            const CBox real = {w->m_vRealPosition.vec().x, w->m_vRealPosition.vec().y, w->m_vRealSize.vec().x, w->m_vRealSize.vec().y};
+            const CBox real = {w->m_vRealPosition.value().x, w->m_vRealPosition.value().y, w->m_vRealSize.value().x, w->m_vRealSize.value().y};
             const CBox grab = {real.x - BORDER_GRAB_AREA, real.y - BORDER_GRAB_AREA, real.width + 2 * BORDER_GRAB_AREA, real.height + 2 * BORDER_GRAB_AREA};
 
             if ((grab.containsPoint(mouseCoords) && (!real.containsPoint(mouseCoords) || w->isInCurvedCorner(mouseCoords.x, mouseCoords.y))) && !w->hasPopupAt(mouseCoords)) {
@@ -641,7 +612,7 @@ void CInputManager::processMouseDownNormal(wlr_pointer_button_event* e) {
             if (**PFOLLOWMOUSE == 3) // don't refocus on full loose
                 break;
 
-            if ((!g_pCompositor->m_sSeat.mouse || !g_pCompositor->m_sSeat.mouse->currentConstraint) /* No constraints */
+            if ((!g_pCompositor->m_sSeat.mouse || !isConstrained()) /* No constraints */
                 && (w && g_pCompositor->m_pLastWindow != w) /* window should change */) {
                 // a bit hacky
                 // if we only pressed one button, allow us to refocus. m_lCurrentlyHeldButtons.size() > 0 will stick the focus
@@ -823,7 +794,8 @@ void CInputManager::applyConfigToKeyboard(SKeyboard* pKeyboard) {
     const auto REPEATRATE  = g_pConfigManager->getDeviceInt(devname, "repeat_rate", "input:repeat_rate");
     const auto REPEATDELAY = g_pConfigManager->getDeviceInt(devname, "repeat_delay", "input:repeat_delay");
 
-    const auto NUMLOCKON = g_pConfigManager->getDeviceInt(devname, "numlock_by_default", "input:numlock_by_default");
+    const auto NUMLOCKON         = g_pConfigManager->getDeviceInt(devname, "numlock_by_default", "input:numlock_by_default");
+    const auto RESOLVEBINDSBYSYM = g_pConfigManager->getDeviceInt(devname, "resolve_binds_by_sym", "input:resolve_binds_by_sym");
 
     const auto FILEPATH = g_pConfigManager->getDeviceString(devname, "kb_file", "input:kb_file");
     const auto RULES    = g_pConfigManager->getDeviceString(devname, "kb_rules", "input:kb_rules");
@@ -834,7 +806,8 @@ void CInputManager::applyConfigToKeyboard(SKeyboard* pKeyboard) {
 
     const auto ENABLED = HASCONFIG ? g_pConfigManager->getDeviceInt(devname, "enabled") : true;
 
-    pKeyboard->enabled = ENABLED;
+    pKeyboard->enabled           = ENABLED;
+    pKeyboard->resolveBindsBySym = RESOLVEBINDSBYSYM;
 
     try {
         if (NUMLOCKON == pKeyboard->numlockOn && REPEATDELAY == pKeyboard->repeatDelay && REPEATRATE == pKeyboard->repeatRate && RULES != "" &&
@@ -907,6 +880,8 @@ void CInputManager::applyConfigToKeyboard(SKeyboard* pKeyboard) {
     }
 
     wlr_keyboard_set_keymap(wlr_keyboard_from_input_device(pKeyboard->keyboard), KEYMAP);
+
+    pKeyboard->updateXKBTranslationState();
 
     wlr_keyboard_modifiers wlrMods = {0};
 
@@ -1127,6 +1102,8 @@ void CInputManager::destroyKeyboard(SKeyboard* pKeyboard) {
     pKeyboard->hyprListener_keyboardMod.removeCallback();
     pKeyboard->hyprListener_keyboardKey.removeCallback();
 
+    xkb_state_unref(pKeyboard->xkbTranslationState);
+
     if (pKeyboard->active) {
         m_lKeyboards.remove(*pKeyboard);
 
@@ -1239,6 +1216,8 @@ void CInputManager::onKeyboardMod(void* data, SKeyboard* pKeyboard) {
 
         const auto LAYOUT = getActiveLayoutForKeyboard(pKeyboard);
 
+        pKeyboard->updateXKBTranslationState();
+
         g_pEventManager->postEvent(SHyprIPCEvent{"activelayout", pKeyboard->name + "," + LAYOUT});
         EMIT_HOOK_EVENT("activeLayout", (std::vector<void*>{pKeyboard, (void*)&LAYOUT}));
     }
@@ -1270,133 +1249,27 @@ void CInputManager::updateDragIcon() {
     }
 }
 
-void CInputManager::recheckConstraint(SMouse* pMouse) {
-    if (!pMouse->currentConstraint)
-        return;
-
-    const auto PREGION = &pMouse->currentConstraint->region;
-
-    if (pMouse->currentConstraint->type == WLR_POINTER_CONSTRAINT_V1_CONFINED)
-        pMouse->confinedTo.set(PREGION);
-    else
-        pMouse->confinedTo.clear();
-}
-
-void CInputManager::constrainMouse(SMouse* pMouse, wlr_pointer_constraint_v1* constraint) {
-
-    if (pMouse->currentConstraint == constraint)
-        return;
-
-    const auto MOUSECOORDS = getMouseCoordsInternal();
-    const auto PCONSTRAINT = constraintFromWlr(constraint);
-
-    pMouse->hyprListener_commitConstraint.removeCallback();
-
-    if (pMouse->currentConstraint)
-        wlr_pointer_constraint_v1_send_deactivated(pMouse->currentConstraint);
-
-    if (const auto PWINDOW = g_pCompositor->getWindowFromSurface(constraint->surface); PWINDOW) {
-        const auto RELATIVETO = PWINDOW->m_bIsX11 ?
-            (PWINDOW->m_bIsMapped ? PWINDOW->m_vRealPosition.goalv() :
-                                    g_pXWaylandManager->xwaylandToWaylandCoords({PWINDOW->m_uSurface.xwayland->x, PWINDOW->m_uSurface.xwayland->y})) :
-            PWINDOW->m_vRealPosition.goalv();
-
-        PCONSTRAINT->cursorPosOnActivate = (MOUSECOORDS - RELATIVETO) * PWINDOW->m_fX11SurfaceScaledBy;
-    }
-
-    if (constraint->current.committed & WLR_POINTER_CONSTRAINT_V1_STATE_CURSOR_HINT) {
-        PCONSTRAINT->hintSet      = true;
-        PCONSTRAINT->positionHint = {constraint->current.cursor_hint.x, constraint->current.cursor_hint.y};
-    }
-
-    if (constraint->current.committed & WLR_POINTER_CONSTRAINT_V1_STATE_CURSOR_HINT && constraint->type == WLR_POINTER_CONSTRAINT_V1_LOCKED)
-        warpMouseToConstraintMiddle(PCONSTRAINT);
-
-    pMouse->currentConstraint = constraint;
-    pMouse->constraintActive  = true;
-
-    if (pixman_region32_not_empty(&constraint->current.region))
-        pixman_region32_intersect(&constraint->region, &constraint->surface->input_region, &constraint->current.region);
-    else
-        pixman_region32_copy(&constraint->region, &constraint->surface->input_region);
-
-    // warp to the constraint
-    recheckConstraint(pMouse);
-
-    PCONSTRAINT->active = true;
-
-    wlr_pointer_constraint_v1_send_activated(pMouse->currentConstraint);
-
-    pMouse->hyprListener_commitConstraint.initCallback(&pMouse->currentConstraint->surface->events.commit, &Events::listener_commitConstraint, pMouse, "Mouse constraint commit");
-
-    Debug::log(LOG, "Constrained mouse to {:x}", (uintptr_t)pMouse->currentConstraint);
-}
-
-void CInputManager::warpMouseToConstraintMiddle(SConstraint* pConstraint) {
-
-    if (!pConstraint)
-        return;
-
-    const auto PWINDOW = g_pCompositor->getWindowFromSurface(pConstraint->constraint->surface);
-
-    if (PWINDOW) {
-        const auto RELATIVETO = pConstraint->getLogicConstraintPos();
-        const auto HINTSCALE  = PWINDOW->m_fX11SurfaceScaledBy;
-
-        auto       HINT = pConstraint->hintSet ? pConstraint->positionHint : pConstraint->cursorPosOnActivate;
-
-        if (HINT == Vector2D{-1, -1})
-            HINT = pConstraint->getLogicConstraintSize() / 2.f;
-
-        if (HINT != Vector2D{-1, -1}) {
-            wlr_cursor_warp(g_pCompositor->m_sWLRCursor, nullptr, RELATIVETO.x + HINT.x / HINTSCALE, RELATIVETO.y + HINT.y / HINTSCALE);
-            wlr_seat_pointer_warp(pConstraint->constraint->seat, pConstraint->constraint->current.cursor_hint.x, pConstraint->constraint->current.cursor_hint.y);
-        }
-    }
-}
-
 void CInputManager::unconstrainMouse() {
-    if (!g_pCompositor->m_sSeat.mouse || !g_pCompositor->m_sSeat.mouse->currentConstraint)
+    if (!g_pCompositor->m_sSeat.mouse)
         return;
 
-    const auto CONSTRAINTWINDOW = g_pCompositor->getConstraintWindow(g_pCompositor->m_sSeat.mouse);
+    for (auto& c : m_vConstraints) {
+        if (!c->active())
+            continue;
 
-    if (CONSTRAINTWINDOW)
-        g_pXWaylandManager->activateSurface(CONSTRAINTWINDOW->m_pWLSurface.wlr(), false);
-
-    wlr_pointer_constraint_v1_send_deactivated(g_pCompositor->m_sSeat.mouse->currentConstraint);
-
-    const auto PCONSTRAINT = constraintFromWlr(g_pCompositor->m_sSeat.mouse->currentConstraint);
-    if (PCONSTRAINT)
-        PCONSTRAINT->active = false;
-
-    g_pCompositor->m_sSeat.mouse->constraintActive = false;
-
-    // TODO: its better to somehow detect the workspace...
-    g_pCompositor->m_sSeat.mouse->currentConstraint = nullptr;
-
-    g_pCompositor->m_sSeat.mouse->hyprListener_commitConstraint.removeCallback();
+        c->deactivate();
+    }
 }
 
-void Events::listener_commitConstraint(void* owner, void* data) {
-    const auto PMOUSE = (SMouse*)owner;
+bool CInputManager::isConstrained() {
+    for (auto& c : m_vConstraints) {
+        if (!c->active() || c->owner()->wlr() != g_pCompositor->m_pLastFocus)
+            continue;
 
-    if (PMOUSE->currentConstraint->current.committed & WLR_POINTER_CONSTRAINT_V1_STATE_CURSOR_HINT) {
-        const auto PCONSTRAINT = g_pInputManager->constraintFromWlr(PMOUSE->currentConstraint);
-        if (PCONSTRAINT) { // should never be null but who knows
-            PCONSTRAINT->positionHint = Vector2D(PMOUSE->currentConstraint->current.cursor_hint.x, PMOUSE->currentConstraint->current.cursor_hint.y);
-            PCONSTRAINT->hintSet      = true;
-        }
+        return true;
     }
 
-    if (PMOUSE->currentConstraint->current.committed & WLR_POINTER_CONSTRAINT_V1_STATE_REGION) {
-        if (pixman_region32_not_empty(&PMOUSE->currentConstraint->current.region))
-            pixman_region32_intersect(&PMOUSE->currentConstraint->region, &PMOUSE->currentConstraint->surface->input_region, &PMOUSE->currentConstraint->current.region);
-        else
-            pixman_region32_copy(&PMOUSE->currentConstraint->region, &PMOUSE->currentConstraint->surface->input_region);
-
-        g_pInputManager->recheckConstraint(PMOUSE);
-    }
+    return false;
 }
 
 void CInputManager::updateCapabilities() {
@@ -1491,14 +1364,27 @@ void CInputManager::setTouchDeviceConfigs(STouchDevice* dev) {
                 libinput_device_config_send_events_set_mode(LIBINPUTDEV, mode);
 
             const int ROTATION = std::clamp(g_pConfigManager->getDeviceInt(PTOUCHDEV->name, "transform", "input:touchdevice:transform"), 0, 7);
+            Debug::log(LOG, "Setting calibration matrix for device {}", PTOUCHDEV->name);
             if (libinput_device_config_calibration_has_matrix(LIBINPUTDEV))
                 libinput_device_config_calibration_set_matrix(LIBINPUTDEV, MATRICES[ROTATION]);
 
-            const auto OUTPUT = g_pConfigManager->getDeviceString(PTOUCHDEV->name, "output", "input:touchdevice:output");
-            if (!OUTPUT.empty() && OUTPUT != STRVAL_EMPTY)
-                PTOUCHDEV->boundOutput = OUTPUT;
-            else
-                PTOUCHDEV->boundOutput = "";
+            auto       output     = g_pConfigManager->getDeviceString(PTOUCHDEV->name, "output", "input:touchdevice:output");
+            bool       bound      = !output.empty() && output != STRVAL_EMPTY;
+            const bool AUTODETECT = output == "[[Auto]]";
+            if (!bound && AUTODETECT) {
+                const auto DEFAULTOUTPUT = wlr_touch_from_input_device(PTOUCHDEV->pWlrDevice)->output_name;
+                if (DEFAULTOUTPUT) {
+                    output = DEFAULTOUTPUT;
+                    bound  = true;
+                }
+            }
+            PTOUCHDEV->boundOutput = bound ? output : "";
+            const auto PMONITOR    = bound ? g_pCompositor->getMonitorFromName(output) : nullptr;
+            if (PMONITOR) {
+                Debug::log(LOG, "Binding touch device {} to output {}", PTOUCHDEV->name, PMONITOR->szName);
+                wlr_cursor_map_input_to_output(g_pCompositor->m_sWLRCursor, PTOUCHDEV->pWlrDevice, PMONITOR->output);
+            } else if (bound)
+                Debug::log(ERR, "Failed to bind touch device {} to output '{}': monitor not found", PTOUCHDEV->name, output);
         }
     };
 
@@ -1529,9 +1415,12 @@ void CInputManager::setTabletConfigs() {
             const auto OUTPUT   = g_pConfigManager->getDeviceString(t.name, "output", "input:tablet:output");
             const auto PMONITOR = g_pCompositor->getMonitorFromString(OUTPUT);
             if (!OUTPUT.empty() && OUTPUT != STRVAL_EMPTY && PMONITOR) {
+                Debug::log(LOG, "Binding tablet {} to output {}", t.name, PMONITOR->szName);
                 wlr_cursor_map_input_to_output(g_pCompositor->m_sWLRCursor, t.wlrDevice, PMONITOR->output);
                 wlr_cursor_map_input_to_region(g_pCompositor->m_sWLRCursor, t.wlrDevice, nullptr);
-            }
+                t.boundOutput = OUTPUT;
+            } else if (!PMONITOR)
+                Debug::log(ERR, "Failed to bind tablet {} to output '{}': monitor not found", t.name, OUTPUT);
 
             const auto REGION_POS  = g_pConfigManager->getDeviceVec(t.name, "region_position", "input:tablet:region_position");
             const auto REGION_SIZE = g_pConfigManager->getDeviceVec(t.name, "region_size", "input:tablet:region_size");
@@ -1644,15 +1533,6 @@ std::string CInputManager::getNameForNewDevice(std::string internalName) {
         dupeno++;
 
     return proposedNewName + (dupeno == 0 ? "" : ("-" + std::to_string(dupeno)));
-}
-
-SConstraint* CInputManager::constraintFromWlr(wlr_pointer_constraint_v1* constraint) {
-    for (auto& c : m_lConstraints) {
-        if (c.constraint == constraint)
-            return &c;
-    }
-
-    return nullptr;
 }
 
 void CInputManager::releaseAllMouseButtons() {

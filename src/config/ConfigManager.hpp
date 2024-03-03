@@ -43,6 +43,7 @@ struct SWorkspaceRule {
     std::optional<int>                 decorate;
     std::optional<int>                 shadow;
     std::optional<std::string>         onCreatedEmptyRunCmd;
+    std::optional<std::string>         defaultName;
     std::map<std::string, std::string> layoutopts;
 };
 
@@ -102,7 +103,7 @@ class CConfigManager {
     static std::string                                              getConfigDir();
     static std::string                                              getMainConfigPath();
 
-    SMonitorRule                                                    getMonitorRuleFor(const std::string&, const std::string& displayName = "");
+    SMonitorRule                                                    getMonitorRuleFor(const CMonitor&);
     SWorkspaceRule                                                  getWorkspaceRuleFor(CWorkspace*);
     std::string                                                     getDefaultWorkspaceFor(const std::string&);
 
@@ -110,7 +111,7 @@ class CConfigManager {
     std::string                                                     getBoundMonitorStringForWS(const std::string&);
     const std::deque<SWorkspaceRule>&                               getAllWorkspaceRules();
 
-    std::vector<SWindowRule>                                        getMatchingRules(CWindow*, bool dynamic = true);
+    std::vector<SWindowRule>                                        getMatchingRules(CWindow*, bool dynamic = true, bool shadowExec = false);
     std::vector<SLayerRule>                                         getMatchingRules(SLayerSurface*);
 
     std::unordered_map<std::string, SMonitorAdditionalReservedArea> m_mAdditionalReservedAreas;

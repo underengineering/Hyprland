@@ -171,8 +171,8 @@ static std::string getWindowData(CWindow* w, eHyprCtlOutputFormat format) {
     "swallowing": "0x{:x}",
     "focusHistoryID": {}
 }},)#",
-            (uintptr_t)w, (w->m_bIsMapped ? "true" : "false"), (w->isHidden() ? "true" : "false"), (int)w->m_vRealPosition.goalv().x, (int)w->m_vRealPosition.goalv().y,
-            (int)w->m_vRealSize.goalv().x, (int)w->m_vRealSize.goalv().y, w->m_iWorkspaceID,
+            (uintptr_t)w, (w->m_bIsMapped ? "true" : "false"), (w->isHidden() ? "true" : "false"), (int)w->m_vRealPosition.goal().x, (int)w->m_vRealPosition.goal().y,
+            (int)w->m_vRealSize.goal().x, (int)w->m_vRealSize.goal().y, w->m_iWorkspaceID,
             escapeJSONStrings(w->m_iWorkspaceID == -1                                ? "" :
                                   g_pCompositor->getWorkspaceByID(w->m_iWorkspaceID) ? g_pCompositor->getWorkspaceByID(w->m_iWorkspaceID)->m_szName :
                                                                                        std::string("Invalid workspace " + std::to_string(w->m_iWorkspaceID))),
@@ -187,8 +187,8 @@ static std::string getWindowData(CWindow* w, eHyprCtlOutputFormat format) {
             "{}\n\tinitialClass: {}\n\tinitialTitle: {}\n\tpid: "
             "{}\n\txwayland: {}\n\tpinned: "
             "{}\n\tfullscreen: {}\n\tfullscreenmode: {}\n\tfakefullscreen: {}\n\tgrouped: {}\n\tswallowing: {:x}\n\tfocusHistoryID: {}\n\n",
-            (uintptr_t)w, w->m_szTitle, (int)w->m_bIsMapped, (int)w->isHidden(), (int)w->m_vRealPosition.goalv().x, (int)w->m_vRealPosition.goalv().y,
-            (int)w->m_vRealSize.goalv().x, (int)w->m_vRealSize.goalv().y, w->m_iWorkspaceID,
+            (uintptr_t)w, w->m_szTitle, (int)w->m_bIsMapped, (int)w->isHidden(), (int)w->m_vRealPosition.goal().x, (int)w->m_vRealPosition.goal().y, (int)w->m_vRealSize.goal().x,
+            (int)w->m_vRealSize.goal().y, w->m_iWorkspaceID,
             (w->m_iWorkspaceID == -1                                ? "" :
                  g_pCompositor->getWorkspaceByID(w->m_iWorkspaceID) ? g_pCompositor->getWorkspaceByID(w->m_iWorkspaceID)->m_szName :
                                                                       std::string("Invalid workspace " + std::to_string(w->m_iWorkspaceID))),
@@ -718,8 +718,8 @@ std::string bindsRequest(eHyprCtlOutputFormat format, std::string request) {
             if (kb.nonConsuming)
                 ret += "n";
 
-            ret += std::format("\n\tmodmask: {}\n\tsubmap: {}\n\tkey: {}\n\tkeycode: {}\n\tdispatcher: {}\n\targ: {}\n\n", kb.modmask, kb.submap, kb.key, kb.keycode, kb.handler,
-                               kb.arg);
+            ret += std::format("\n\tmodmask: {}\n\tsubmap: {}\n\tkey: {}\n\tkeycode: {}\n\tcatchall: {}\n\tdispatcher: {}\n\targ: {}\n\n", kb.modmask, kb.submap, kb.key,
+                               kb.keycode, kb.catchAll, kb.handler, kb.arg);
         }
     } else {
         // json
@@ -737,11 +737,13 @@ std::string bindsRequest(eHyprCtlOutputFormat format, std::string request) {
     "submap": "{}",
     "key": "{}",
     "keycode": {},
+    "catch_all": {},
     "dispatcher": "{}",
     "arg": "{}"
 }},)#",
                 kb.locked ? "true" : "false", kb.mouse ? "true" : "false", kb.release ? "true" : "false", kb.repeat ? "true" : "false", kb.nonConsuming ? "true" : "false",
-                kb.modmask, escapeJSONStrings(kb.submap), escapeJSONStrings(kb.key), kb.keycode, escapeJSONStrings(kb.handler), escapeJSONStrings(kb.arg));
+                kb.modmask, escapeJSONStrings(kb.submap), escapeJSONStrings(kb.key), kb.keycode, kb.catchAll ? "true" : "false", escapeJSONStrings(kb.handler),
+                escapeJSONStrings(kb.arg));
         }
         trimTrailingComma(ret);
         ret += "]";
@@ -1430,6 +1432,26 @@ std::string dispatchNotify(eHyprCtlOutputFormat format, std::string request) {
     return "ok";
 }
 
+std::string dispatchDismissNotify(eHyprCtlOutputFormat format, std::string request) {
+    CVarList vars(request, 0, ' ');
+
+    int      amount = -1;
+
+    if (vars.size() > 1) {
+        const auto AMOUNT = vars[1];
+        if (!isNumber(AMOUNT))
+            return "invalid arg 1";
+
+        try {
+            amount = std::stoi(AMOUNT);
+        } catch (std::exception& e) { return "invalid arg 1"; }
+    }
+
+    g_pHyprNotificationOverlay->dismissNotifications(amount);
+
+    return "ok";
+}
+
 CHyprCtl::CHyprCtl() {
     registerCommand(SHyprCtlCommand{"workspaces", true, workspacesRequest});
     registerCommand(SHyprCtlCommand{"workspacerules", true, workspaceRulesRequest});
@@ -1453,6 +1475,7 @@ CHyprCtl::CHyprCtl() {
     registerCommand(SHyprCtlCommand{"reload", false, reloadRequest});
     registerCommand(SHyprCtlCommand{"plugin", false, dispatchPlugin});
     registerCommand(SHyprCtlCommand{"notify", false, dispatchNotify});
+    registerCommand(SHyprCtlCommand{"dismissnotify", false, dispatchDismissNotify});
     registerCommand(SHyprCtlCommand{"setprop", false, dispatchSetProp});
     registerCommand(SHyprCtlCommand{"seterror", false, dispatchSeterror});
     registerCommand(SHyprCtlCommand{"switchxkblayout", false, switchXKBLayoutRequest});
@@ -1476,7 +1499,8 @@ void CHyprCtl::unregisterCommand(const std::shared_ptr<SHyprCtlCommand>& cmd) {
 }
 
 std::string CHyprCtl::getReply(std::string request) {
-    auto format = eHyprCtlOutputFormat::FORMAT_NORMAL;
+    auto format    = eHyprCtlOutputFormat::FORMAT_NORMAL;
+    bool reloadAll = false;
 
     // process flags for non-batch requests
     if (!request.starts_with("[[BATCH]]") && request.contains("/")) {
@@ -1497,30 +1521,66 @@ std::string CHyprCtl::getReply(std::string request) {
 
             if (c == 'j')
                 format = eHyprCtlOutputFormat::FORMAT_JSON;
+            if (c == 'r')
+                reloadAll = true;
         }
 
         if (sepIndex < request.size())
             request = request.substr(sepIndex + 1); // remove flags and separator so we can compare the rest of the string
     }
 
+    std::string result = "";
+
     // parse exact cmds first, then non-exact.
     for (auto& cmd : m_vCommands) {
         if (!cmd->exact)
             continue;
 
-        if (cmd->name == request)
-            return cmd->fn(format, request);
+        if (cmd->name == request) {
+            result = cmd->fn(format, request);
+            break;
+        }
     }
 
-    for (auto& cmd : m_vCommands) {
-        if (cmd->exact)
-            continue;
+    if (result.empty())
+        for (auto& cmd : m_vCommands) {
+            if (cmd->exact)
+                continue;
 
-        if (request.starts_with(cmd->name))
-            return cmd->fn(format, request);
+            if (request.starts_with(cmd->name)) {
+                result = cmd->fn(format, request);
+                break;
+            }
+        }
+
+    if (result.empty())
+        return "unknown request";
+
+    if (reloadAll) {
+        g_pConfigManager->m_bWantsMonitorReload = true; // for monitor keywords
+
+        g_pInputManager->setKeyboardLayout();     // update kb layout
+        g_pInputManager->setPointerConfigs();     // update mouse cfgs
+        g_pInputManager->setTouchDeviceConfigs(); // update touch device cfgs
+        g_pInputManager->setTabletConfigs();      // update tablets
+
+        static auto* const PLAYOUT = (Hyprlang::STRING const*)g_pConfigManager->getConfigValuePtr("general:layout");
+
+        g_pLayoutManager->switchToLayout(*PLAYOUT); // update layout
+
+        g_pHyprOpenGL->m_bReloadScreenShader = true;
+
+        for (auto& [m, rd] : g_pHyprOpenGL->m_mMonitorRenderResources) {
+            rd.blurFBDirty = true;
+        }
+
+        for (auto& m : g_pCompositor->m_vMonitors) {
+            g_pHyprRenderer->damageMonitor(m.get());
+            g_pLayoutManager->getCurrentLayout()->recalculateMonitor(m->ID);
+        }
     }
 
-    return "unknown request";
+    return result;
 }
 
 std::string CHyprCtl::makeDynamicCall(const std::string& input) {

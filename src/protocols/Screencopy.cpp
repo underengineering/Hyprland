@@ -95,6 +95,9 @@ static SScreencopyFrame* frameFromResource(wl_resource* resource) {
 }
 
 void CScreencopyProtocolManager::removeClient(CScreencopyClient* client, bool force) {
+    if (!client)
+        return;
+
     if (!force) {
         if (!client || client->ref <= 0)
             return;
@@ -104,6 +107,12 @@ void CScreencopyProtocolManager::removeClient(CScreencopyClient* client, bool fo
     }
 
     m_lClients.remove(*client); // TODO: this doesn't get cleaned up after sharing app exits???
+
+    for (auto& f : m_lFrames) {
+        // avoid dangling ptrs
+        if (f.client == client)
+            f.client = nullptr;
+    }
 }
 
 static void handleManagerResourceDestroy(wl_resource* resource) {
@@ -444,6 +453,8 @@ void CScreencopyProtocolManager::sendFrameDamage(SScreencopyFrame* frame) {
     //     zwlr_screencopy_frame_v1_send_damage(frame->resource, std::clamp(RECT.x1, 0, frame->buffer->width), std::clamp(RECT.y1, 0, frame->buffer->height),
     //                                          std::clamp(RECT.x2 - RECT.x1, 0, frame->buffer->width - RECT.x1), std::clamp(RECT.y2 - RECT.y1, 0, frame->buffer->height - RECT.y1));
     // }
+
+    zwlr_screencopy_frame_v1_send_damage(frame->resource, 0, 0, frame->buffer->width, frame->buffer->height);
 }
 
 bool CScreencopyProtocolManager::copyFrameShm(SScreencopyFrame* frame, timespec* now) {
@@ -473,9 +484,9 @@ bool CScreencopyProtocolManager::copyFrameShm(SScreencopyFrame* frame, timespec*
     }
 
     CBox monbox = CBox{0, 0, frame->pMonitor->vecTransformedSize.x, frame->pMonitor->vecTransformedSize.y}.translate({-frame->box.x, -frame->box.y});
-    g_pHyprOpenGL->setMonitorTransformEnabled(false);
-    g_pHyprOpenGL->renderTexture(sourceTex, &monbox, 1);
     g_pHyprOpenGL->setMonitorTransformEnabled(true);
+    g_pHyprOpenGL->renderTexture(sourceTex, &monbox, 1);
+    g_pHyprOpenGL->setMonitorTransformEnabled(false);
 
 #ifndef GLES2
     glBindFramebuffer(GL_READ_FRAMEBUFFER, fb.m_iFb);
@@ -524,15 +535,17 @@ bool CScreencopyProtocolManager::copyFrameDmabuf(SScreencopyFrame* frame) {
     if (!sourceTex)
         return false;
 
-    CRegion fakeDamage = {0, 0, frame->box.width, frame->box.height};
+    CRegion fakeDamage = {0, 0, INT16_MAX, INT16_MAX};
 
     if (!g_pHyprRenderer->beginRender(frame->pMonitor, fakeDamage, RENDER_MODE_TO_BUFFER, frame->buffer))
         return false;
 
-    CBox monbox = CBox{0, 0, frame->pMonitor->vecPixelSize.x, frame->pMonitor->vecPixelSize.y}.translate({-frame->box.x, -frame->box.y});
-    g_pHyprOpenGL->setMonitorTransformEnabled(false);
-    g_pHyprOpenGL->renderTexture(sourceTex, &monbox, 1);
+    CBox monbox = CBox{0, 0, frame->pMonitor->vecPixelSize.x, frame->pMonitor->vecPixelSize.y}
+                      .translate({-frame->box.x, -frame->box.y}) // vvvv kinda ass-backwards but that's how I designed the renderer... sigh.
+                      .transform(wlr_output_transform_invert(frame->pMonitor->output->transform), frame->pMonitor->vecPixelSize.x, frame->pMonitor->vecPixelSize.y);
     g_pHyprOpenGL->setMonitorTransformEnabled(true);
+    g_pHyprOpenGL->renderTexture(sourceTex, &monbox, 1);
+    g_pHyprOpenGL->setMonitorTransformEnabled(false);
 
     g_pHyprRenderer->endRender();
 

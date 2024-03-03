@@ -127,7 +127,13 @@ void CHyprDwindleLayout::applyNodeDataToWindow(SDwindleNodeData* pNode, bool for
     const auto PWINDOW = pNode->pWindow;
     // get specific gaps and rules for this workspace,
     // if user specified them in config
-    const auto WORKSPACERULE = g_pConfigManager->getWorkspaceRuleFor(g_pCompositor->getWorkspaceByID(PWINDOW->m_iWorkspaceID));
+    const auto WORKSPACERULE = g_pConfigManager->getWorkspaceRuleFor(g_pCompositor->getWorkspaceByID(pNode->workspaceID));
+
+    if (!g_pCompositor->windowExists(PWINDOW)) {
+        Debug::log(ERR, "Node {} holding invalid {}!!", pNode, PWINDOW);
+        onWindowRemovedTiling(PWINDOW);
+        return;
+    }
 
     if (PWINDOW->m_bIsFullscreen && !pNode->ignoreFullscreenChecks)
         return;
@@ -143,13 +149,7 @@ void CHyprDwindleLayout::applyNodeDataToWindow(SDwindleNodeData* pNode, bool for
     auto               gapsIn  = WORKSPACERULE.gapsIn.value_or(*PGAPSIN);
     auto               gapsOut = WORKSPACERULE.gapsOut.value_or(*PGAPSOUT);
 
-    if (!g_pCompositor->windowExists(PWINDOW) || !PWINDOW->m_bIsMapped) {
-        Debug::log(ERR, "Node {} holding invalid {}!!", pNode, PWINDOW);
-        onWindowRemovedTiling(PWINDOW);
-        return;
-    }
-
-    CBox nodeBox = pNode->box;
+    CBox               nodeBox = pNode->box;
     nodeBox.round();
 
     PWINDOW->m_vSize     = nodeBox.size();
@@ -172,7 +172,7 @@ void CHyprDwindleLayout::applyNodeDataToWindow(SDwindleNodeData* pNode, bool for
         PWINDOW->m_vRealPosition = PWINDOW->m_vPosition + RESERVED.topLeft;
         PWINDOW->m_vRealSize     = PWINDOW->m_vSize - (RESERVED.topLeft + RESERVED.bottomRight);
 
-        g_pXWaylandManager->setWindowSize(PWINDOW, PWINDOW->m_vRealSize.goalv());
+        g_pXWaylandManager->setWindowSize(PWINDOW, PWINDOW->m_vRealSize.goal());
 
         return;
     }
@@ -606,7 +606,7 @@ void CHyprDwindleLayout::resizeActiveWindow(const Vector2D& pixResize, eRectCorn
     const auto PNODE = getNodeFromWindow(PWINDOW);
 
     if (!PNODE) {
-        PWINDOW->m_vRealSize = Vector2D(std::max((PWINDOW->m_vRealSize.goalv() + pixResize).x, 20.0), std::max((PWINDOW->m_vRealSize.goalv() + pixResize).y, 20.0));
+        PWINDOW->m_vRealSize = Vector2D(std::max((PWINDOW->m_vRealSize.goal() + pixResize).x, 20.0), std::max((PWINDOW->m_vRealSize.goal() + pixResize).y, 20.0));
         PWINDOW->updateWindowDecos();
         return;
     }
@@ -625,7 +625,7 @@ void CHyprDwindleLayout::resizeActiveWindow(const Vector2D& pixResize, eRectCorn
         if (!m_PseudoDragFlags.started) {
             m_PseudoDragFlags.started = true;
 
-            const auto pseudoSize  = PWINDOW->m_vRealSize.goalv();
+            const auto pseudoSize  = PWINDOW->m_vRealSize.goal();
             const auto mouseOffset = g_pInputManager->getMouseCoordsInternal() - (PNODE->box.pos() + ((PNODE->box.size() / 2) - (pseudoSize / 2)));
 
             if (mouseOffset.x > 0 && mouseOffset.x < pseudoSize.x && mouseOffset.y > 0 && mouseOffset.y < pseudoSize.y) {
@@ -805,10 +805,10 @@ void CHyprDwindleLayout::fullscreenRequestForWindow(CWindow* pWindow, eFullscree
 
     // save position and size if floating
     if (pWindow->m_bIsFloating && on) {
-        pWindow->m_vLastFloatingSize     = pWindow->m_vRealSize.goalv();
-        pWindow->m_vLastFloatingPosition = pWindow->m_vRealPosition.goalv();
-        pWindow->m_vPosition             = pWindow->m_vRealPosition.goalv();
-        pWindow->m_vSize                 = pWindow->m_vRealSize.goalv();
+        pWindow->m_vLastFloatingSize     = pWindow->m_vRealSize.goal();
+        pWindow->m_vLastFloatingPosition = pWindow->m_vRealPosition.goal();
+        pWindow->m_vPosition             = pWindow->m_vRealPosition.goal();
+        pWindow->m_vSize                 = pWindow->m_vRealSize.goal();
     }
 
     // otherwise, accept it.
@@ -860,7 +860,7 @@ void CHyprDwindleLayout::fullscreenRequestForWindow(CWindow* pWindow, eFullscree
 
     g_pCompositor->updateWindowAnimatedDecorationValues(pWindow);
 
-    g_pXWaylandManager->setWindowSize(pWindow, pWindow->m_vRealSize.goalv());
+    g_pXWaylandManager->setWindowSize(pWindow, pWindow->m_vRealSize.goal());
 
     g_pCompositor->changeWindowZOrder(pWindow, true);
 
@@ -1092,4 +1092,51 @@ void CHyprDwindleLayout::onEnable() {
 
 void CHyprDwindleLayout::onDisable() {
     m_lDwindleNodesData.clear();
+}
+
+Vector2D CHyprDwindleLayout::predictSizeForNewWindow() {
+    if (!g_pCompositor->m_pLastMonitor)
+        return {};
+
+    // get window candidate
+    CWindow* candidate = g_pCompositor->m_pLastWindow;
+
+    if (!candidate)
+        candidate = g_pCompositor->getFirstWindowOnWorkspace(g_pCompositor->m_pLastMonitor->activeWorkspace);
+
+    // create a fake node
+    SDwindleNodeData node;
+
+    if (!candidate)
+        return g_pCompositor->m_pLastMonitor->vecSize;
+    else {
+        const auto PNODE = getNodeFromWindow(candidate);
+
+        if (!PNODE)
+            return {};
+
+        node         = *PNODE;
+        node.pWindow = nullptr;
+
+        CBox               box = PNODE->box;
+
+        static auto* const PSMARTSPLIT    = (Hyprlang::INT* const*)g_pConfigManager->getConfigValuePtr("dwindle:smart_split");
+        static auto* const PPRESERVESPLIT = (Hyprlang::INT* const*)g_pConfigManager->getConfigValuePtr("dwindle:preserve_split");
+        static auto* const PFLMULT        = (Hyprlang::FLOAT* const*)g_pConfigManager->getConfigValuePtr("dwindle:split_width_multiplier");
+
+        bool               splitTop = box.h * **PFLMULT > box.w;
+
+        const auto         SPLITSIDE = !splitTop;
+
+        if (SPLITSIDE)
+            node.box = {{}, {box.w / 2.0, box.h}};
+        else
+            node.box = {{}, {box.w, box.h / 2.0}};
+
+        // TODO: make this better and more accurate
+
+        return node.box.size();
+    }
+
+    return {};
 }
