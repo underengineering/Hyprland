@@ -455,6 +455,7 @@ CConfigManager::CConfigManager() {
     m_pConfig->addConfigValue("input:scroll_method", {STRVAL_EMPTY});
     m_pConfig->addConfigValue("input:scroll_button", Hyprlang::INT{0});
     m_pConfig->addConfigValue("input:scroll_button_lock", Hyprlang::INT{0});
+    m_pConfig->addConfigValue("input:scroll_factor", {1.f});
     m_pConfig->addConfigValue("input:scroll_points", {STRVAL_EMPTY});
     m_pConfig->addConfigValue("input:touchpad:natural_scroll", Hyprlang::INT{0});
     m_pConfig->addConfigValue("input:touchpad:disable_while_typing", Hyprlang::INT{1});
@@ -1231,9 +1232,9 @@ void CConfigManager::ensureMonitorStatus() {
 }
 
 void CConfigManager::ensureVRR(CMonitor* pMonitor) {
-    static auto* const PVRR = reinterpret_cast<Hyprlang::INT* const*>(getConfigValuePtr("misc:vrr"));
+    static auto PVRR = reinterpret_cast<Hyprlang::INT* const*>(getConfigValuePtr("misc:vrr"));
 
-    static auto        ensureVRRForDisplay = [&](CMonitor* m) -> void {
+    static auto ensureVRRForDisplay = [&](CMonitor* m) -> void {
         if (!m->output || m->createdByUser)
             return;
 
