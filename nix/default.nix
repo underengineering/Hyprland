@@ -8,11 +8,13 @@
   binutils,
   cairo,
   git,
+  hyprcursor,
   hyprland-protocols,
   hyprlang,
   jq,
   libGL,
   libdrm,
+  libexecinfo,
   libinput,
   libxcb,
   libxkbcommon,
@@ -43,7 +45,9 @@
 }:
 assert lib.assertMsg (!nvidiaPatches) "The option `nvidiaPatches` has been removed.";
 assert lib.assertMsg (!enableNvidiaPatches) "The option `enableNvidiaPatches` has been removed.";
-assert lib.assertMsg (!hidpiXWayland) "The option `hidpiXWayland` has been removed. Please refer https://wiki.hyprland.org/Configuring/XWayland";
+assert lib.assertMsg (!hidpiXWayland) "The option `hidpiXWayland` has been removed. Please refer https://wiki.hyprland.org/Configuring/XWayland"; let
+  wlr = wlroots.override {inherit enableXWayland;};
+in
   stdenv.mkDerivation {
     pname = "hyprland${lib.optionalString debug "-debug"}";
     inherit version;
@@ -55,63 +59,6 @@ assert lib.assertMsg (!hidpiXWayland) "The option `hidpiXWayland` has been remov
         ! (lib.hasSuffix ".nix" baseName);
       src = lib.cleanSource ../.;
     };
-
-    nativeBuildInputs = [
-      jq
-      meson
-      ninja
-      pkg-config
-      makeWrapper
-      wayland-scanner
-    ];
-
-    outputs = [
-      "out"
-      "man"
-      "dev"
-    ];
-
-    buildInputs =
-      [
-        cairo
-        git
-        hyprland-protocols
-        hyprlang
-        libdrm
-        libGL
-        libinput
-        libxkbcommon
-        mesa
-        pango
-        pciutils
-        tomlplusplus
-        udis86
-        wayland
-        wayland-protocols
-        wlroots
-      ]
-      ++ lib.optionals enableXWayland [libxcb xcbutilwm xwayland]
-      ++ lib.optionals withSystemd [systemd];
-
-    # avoid wrapping
-    propagatedBuildInputs = [
-      stdenv.cc
-      binutils
-      pciutils
-    ];
-
-    mesonBuildType =
-      if debug
-      then "debug"
-      else "release";
-
-    mesonAutoFeatures = "disabled";
-
-    mesonFlags = builtins.concatLists [
-      (lib.optional enableXWayland "-Dxwayland=enabled")
-      (lib.optional legacyRenderer "-Dlegacy_renderer=enabled")
-      (lib.optional withSystemd "-Dsystemd=enabled")
-    ];
 
     patches = [
       # make meson use the provided wlroots instead of the git submodule
@@ -137,17 +84,78 @@ assert lib.assertMsg (!hidpiXWayland) "The option `hidpiXWayland` has been remov
       }'
     '';
 
+    nativeBuildInputs = [
+      jq
+      makeWrapper
+      meson
+      ninja
+      pkg-config
+      wayland-scanner
+    ];
+
+    outputs = [
+      "out"
+      "man"
+      "dev"
+    ];
+
+    buildInputs =
+      [
+        cairo
+        git
+        hyprcursor.dev
+        hyprland-protocols
+        hyprlang
+        libdrm
+        libGL
+        libinput
+        libxkbcommon
+        mesa
+        pango
+        pciutils
+        tomlplusplus
+        udis86
+        wayland
+        wayland-protocols
+        wlr
+      ]
+      ++ lib.optionals stdenv.hostPlatform.isMusl [libexecinfo]
+      ++ lib.optionals enableXWayland [libxcb xcbutilwm xwayland]
+      ++ lib.optionals withSystemd [systemd];
+
+    mesonBuildType =
+      if debug
+      then "debug"
+      else "release";
+
+    mesonAutoFeatures = "disabled";
+
+    mesonFlags = [
+      (lib.mesonEnable "xwayland" enableXWayland)
+      (lib.mesonEnable "legacy_renderer" legacyRenderer)
+      (lib.mesonEnable "systemd" withSystemd)
+    ];
+
     postInstall = ''
-      ln -s ${wlroots}/include/wlr $dev/include/hyprland/wlroots
+      ln -s ${wlr}/include/wlr $dev/include/hyprland/wlroots
+
+      ${lib.optionalString wrapRuntimeDeps ''
+        wrapProgram $out/bin/Hyprland \
+          --suffix PATH : ${lib.makeBinPath [
+          stdenv.cc
+          binutils
+          pciutils
+        ]}
+      ''}
     '';
 
     passthru.providedSessions = ["hyprland"];
 
     meta = with lib; {
-      homepage = "https://github.com/vaxerski/Hyprland";
+      homepage = "https://github.com/hyprwm/Hyprland";
       description = "A dynamic tiling Wayland compositor that doesn't sacrifice on its looks";
       license = licenses.bsd3;
-      platforms = platforms.linux;
+      platforms = wlr.meta.platforms;
       mainProgram = "Hyprland";
     };
   }

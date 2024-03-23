@@ -35,7 +35,10 @@ void setAnimToMove(void* data) {
 
     CBaseAnimatedVariable* animvar = (CBaseAnimatedVariable*)data;
 
-    animvar->setConfig(PANIMCFG);
+    if (animvar->getWindow() && !animvar->getWindow()->m_vRealPosition.isBeingAnimated() && !animvar->getWindow()->m_vRealSize.isBeingAnimated()) {
+        animvar->setConfig(PANIMCFG);
+        animvar->getWindow()->m_bAnimatingIn = false;
+    }
 }
 
 void Events::listener_mapWindow(void* owner, void* data) {
@@ -716,6 +719,9 @@ void Events::listener_unmapWindow(void* owner, void* data) {
         if (PWINDOWCANDIDATE != g_pCompositor->m_pLastWindow && PWINDOWCANDIDATE)
             g_pCompositor->focusWindow(PWINDOWCANDIDATE);
 
+        if (!PWINDOWCANDIDATE && g_pCompositor->getWindowsOnWorkspace(PWINDOW->m_iWorkspaceID) == 0)
+            g_pInputManager->refocus();
+
         g_pInputManager->sendMotionEventsToFocused();
 
         // CWindow::onUnmap will remove this window's active status, but we can't really do it above.
@@ -898,7 +904,12 @@ void Events::listener_setTitleWindow(void* owner, void* data) {
     if (!g_pCompositor->windowValidMapped(PWINDOW))
         return;
 
-    PWINDOW->m_szTitle = g_pXWaylandManager->getTitle(PWINDOW);
+    const auto NEWTITLE = g_pXWaylandManager->getTitle(PWINDOW);
+
+    if (NEWTITLE == PWINDOW->m_szTitle)
+        return;
+
+    PWINDOW->m_szTitle = NEWTITLE;
     g_pEventManager->postEvent(SHyprIPCEvent{"windowtitle", std::format("{:x}", (uintptr_t)PWINDOW)});
     EMIT_HOOK_EVENT("windowTitle", PWINDOW);
 

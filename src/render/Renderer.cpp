@@ -4,6 +4,8 @@
 #include "../helpers/Region.hpp"
 #include <algorithm>
 #include "../config/ConfigValue.hpp"
+#include "../managers/CursorManager.hpp"
+#include "../desktop/Window.hpp"
 
 extern "C" {
 #include <xf86drm.h>
@@ -30,16 +32,20 @@ CHyprRenderer::CHyprRenderer() {
     } else {
         Debug::log(LOG, "m_sWLRSession is null, omitting full DRM node checks");
 
-        const auto  DRMV = drmGetVersion(g_pCompositor->m_iDRMFD);
+        const auto DRMV = drmGetVersion(g_pCompositor->m_iDRMFD);
 
-        std::string name = std::string{DRMV->name, DRMV->name_len};
-        std::transform(name.begin(), name.end(), name.begin(), tolower);
+        if (DRMV) {
+            std::string name = std::string{DRMV->name, DRMV->name_len};
+            std::transform(name.begin(), name.end(), name.begin(), tolower);
 
-        if (name.contains("nvidia"))
-            m_bNvidia = true;
+            if (name.contains("nvidia"))
+                m_bNvidia = true;
 
-        Debug::log(LOG, "Primary DRM driver information: {} v{}.{}.{} from {} description {}", name, DRMV->version_major, DRMV->version_minor, DRMV->version_patchlevel,
-                   std::string{DRMV->date, DRMV->date_len}, std::string{DRMV->desc, DRMV->desc_len});
+            Debug::log(LOG, "Primary DRM driver information: {} v{}.{}.{} from {} description {}", name, DRMV->version_major, DRMV->version_minor, DRMV->version_patchlevel,
+                       std::string{DRMV->date, DRMV->date_len}, std::string{DRMV->desc, DRMV->desc_len});
+        } else {
+            Debug::log(LOG, "No primary DRM driver information found");
+        }
 
         drmFreeVersion(DRMV);
     }
@@ -70,21 +76,34 @@ static void renderSurface(struct wlr_surface* surface, int x, int y, void* data)
 
         // however, if surface buffer w / h < box, we need to adjust them
         auto* const PSURFACE = CWLSurface::surfaceFromWlr(surface);
+        const auto  PWINDOW  = PSURFACE ? PSURFACE->getWindow() : nullptr;
 
-        if (PSURFACE && !PSURFACE->m_bFillIgnoreSmall && PSURFACE->small() /* guarantees m_pWindowOwner */) {
+        if (PSURFACE && !PSURFACE->m_bFillIgnoreSmall && PSURFACE->small() /* guarantees PWINDOW */) {
             const auto CORRECT = PSURFACE->correctSmallVec();
             const auto SIZE    = PSURFACE->getViewporterCorrectedSize();
 
             if (!INTERACTIVERESIZEINPROGRESS) {
-                windowBox.x += CORRECT.x;
-                windowBox.y += CORRECT.y;
+                windowBox.translate(CORRECT);
 
-                windowBox.width  = SIZE.x * (PSURFACE->getWindow()->m_vRealSize.value().x / PSURFACE->getWindow()->m_vReportedSize.x);
-                windowBox.height = SIZE.y * (PSURFACE->getWindow()->m_vRealSize.value().y / PSURFACE->getWindow()->m_vReportedSize.y);
+                windowBox.width  = SIZE.x * (PWINDOW->m_vRealSize.value().x / PWINDOW->m_vReportedSize.x);
+                windowBox.height = SIZE.y * (PWINDOW->m_vRealSize.value().y / PWINDOW->m_vReportedSize.y);
             } else {
                 windowBox.width  = SIZE.x;
                 windowBox.height = SIZE.y;
             }
+        }
+
+        if (!INTERACTIVERESIZEINPROGRESS && PSURFACE && PWINDOW && PWINDOW->m_vRealSize.goal().floor() > PWINDOW->m_vReportedSize && PWINDOW->m_vReportedSize > Vector2D{1, 1}) {
+            Vector2D coeff  = PWINDOW->m_vReportedSize / PWINDOW->m_vRealSize.value();
+            Vector2D coeff2 = PWINDOW->m_vReportedSize / PWINDOW->m_vRealSize.goal();
+
+            Vector2D size    = Vector2D{windowBox.w, windowBox.h} * coeff;
+            Vector2D correct = Vector2D{windowBox.w, windowBox.h} - Vector2D{windowBox.w, windowBox.h} * coeff2;
+
+            windowBox.translate(correct / 2.0);
+
+            windowBox.w = size.x;
+            windowBox.h = size.y;
         }
 
     } else { //  here we clamp to 2, these might be some tiny specks
@@ -207,6 +226,15 @@ bool CHyprRenderer::shouldRenderWindow(CWindow* pWindow, CMonitor* pMonitor, CWo
 
     if (pMonitor->specialWorkspaceID == pWindow->m_iWorkspaceID)
         return true;
+
+    if (pWindow->m_vRealPosition.isBeingAnimated()) {
+        // render window if window and monitor intersect
+        // (when moving out of or through a monitor)
+        CBox       windowBox  = {pWindow->m_vRealPosition.value(), pWindow->m_vRealSize.value()};
+        const CBox monitorBox = {pMonitor->vecPosition, pMonitor->vecSize};
+        if (!windowBox.intersection(monitorBox).empty())
+            return true;
+    }
 
     return false;
 }
@@ -334,7 +362,7 @@ void CHyprRenderer::renderWorkspaceWindows(CMonitor* pMonitor, CWorkspace* pWork
 
     // Non-floating main
     for (auto& w : g_pCompositor->m_vWindows) {
-        if (w->isHidden() && !w->m_bIsMapped && !w->m_bFadingOut)
+        if (w->isHidden() || (!w->m_bIsMapped && !w->m_bFadingOut))
             continue;
 
         if (w->m_bIsFloating)
@@ -347,7 +375,7 @@ void CHyprRenderer::renderWorkspaceWindows(CMonitor* pMonitor, CWorkspace* pWork
             continue;
 
         // render active window after all others of this pass
-        if (w.get() == g_pCompositor->m_pLastWindow && w->m_iWorkspaceID == pWorkspace->m_iID) {
+        if (w.get() == g_pCompositor->m_pLastWindow) {
             lastWindow = w.get();
             continue;
         }
@@ -361,7 +389,7 @@ void CHyprRenderer::renderWorkspaceWindows(CMonitor* pMonitor, CWorkspace* pWork
 
     // Non-floating popup
     for (auto& w : g_pCompositor->m_vWindows) {
-        if (w->isHidden() && !w->m_bIsMapped && !w->m_bFadingOut)
+        if (w->isHidden() || (!w->m_bIsMapped && !w->m_bFadingOut))
             continue;
 
         if (w->m_bIsFloating)
@@ -379,7 +407,7 @@ void CHyprRenderer::renderWorkspaceWindows(CMonitor* pMonitor, CWorkspace* pWork
 
     // floating on top
     for (auto& w : g_pCompositor->m_vWindows) {
-        if (w->isHidden() && !w->m_bIsMapped && !w->m_bFadingOut)
+        if (w->isHidden() || (!w->m_bIsMapped && !w->m_bFadingOut))
             continue;
 
         if (!w->m_bIsFloating || w->m_bPinned)
@@ -388,7 +416,7 @@ void CHyprRenderer::renderWorkspaceWindows(CMonitor* pMonitor, CWorkspace* pWork
         if (!shouldRenderWindow(w.get(), pMonitor, pWorkspace))
             continue;
 
-        if (w->m_iMonitorID == pWorkspace->m_iMonitorID && pWorkspace->m_bIsSpecialWorkspace != g_pCompositor->isWorkspaceSpecial(w->m_iWorkspaceID))
+        if (pWorkspace->m_bIsSpecialWorkspace != g_pCompositor->isWorkspaceSpecial(w->m_iWorkspaceID))
             continue;
 
         if (pWorkspace->m_bIsSpecialWorkspace && w->m_iMonitorID != pWorkspace->m_iMonitorID)
@@ -408,6 +436,9 @@ void CHyprRenderer::renderWindow(CWindow* pWindow, CMonitor* pMonitor, timespec*
             g_pHyprOpenGL->renderSnapshot(&pWindow);
         return;
     }
+
+    if (!pWindow->m_bIsMapped)
+        return;
 
     TRACY_GPU_ZONE("RenderWindow");
 
@@ -495,6 +526,10 @@ void CHyprRenderer::renderWindow(CWindow* pWindow, CMonitor* pMonitor, timespec*
         CRegion rg                          = pWindow->getFullWindowBoundingBox().translate(-pMonitor->vecPosition + PWORKSPACE->m_vRenderOffset.value()).scale(pMonitor->scale);
         g_pHyprOpenGL->m_RenderData.clipBox = rg.getExtents();
     }
+
+    // if window is tiled and it's flying in, don't render on other mons (for slide)
+    if (!ignorePosition && !pWindow->m_bIsFloating && pWindow->m_vRealPosition.isBeingAnimated() && pWindow->m_bAnimatingIn && pWindow->m_iMonitorID != pMonitor->ID)
+        return;
 
     // render window decorations first, if not fullscreen full
     if (mode == RENDER_PASS_ALL || mode == RENDER_PASS_MAIN) {
@@ -762,7 +797,7 @@ void CHyprRenderer::renderAllClientsForWorkspace(CMonitor* pMonitor, CWorkspace*
 
     // special
     for (auto& ws : g_pCompositor->m_vWorkspaces) {
-        if (ws->m_iMonitorID == pMonitor->ID && ws->m_fAlpha.value() > 0.f && ws->m_bIsSpecialWorkspace) {
+        if (ws->m_fAlpha.value() > 0.f && ws->m_bIsSpecialWorkspace) {
             if (ws->m_bHasFullscreenWindow)
                 renderWorkspaceWindowsFullscreen(pMonitor, ws.get(), time);
             else
@@ -807,16 +842,23 @@ void CHyprRenderer::renderAllClientsForWorkspace(CMonitor* pMonitor, CWorkspace*
     g_pHyprOpenGL->m_RenderData.renderModif = {};
 }
 
-void CHyprRenderer::renderLockscreen(CMonitor* pMonitor, timespec* now) {
+void CHyprRenderer::renderLockscreen(CMonitor* pMonitor, timespec* now, const CBox& geometry) {
     TRACY_GPU_ZONE("RenderLockscreen");
 
     if (g_pSessionLockManager->isSessionLocked()) {
-        const auto PSLS = g_pSessionLockManager->getSessionLockSurfaceForMonitor(pMonitor->ID);
+        Vector2D   translate = {geometry.x, geometry.y};
+        float      scale     = (float)geometry.width / pMonitor->vecPixelSize.x;
 
+        const auto PSLS = g_pSessionLockManager->getSessionLockSurfaceForMonitor(pMonitor->ID);
         if (!PSLS) {
             // locked with no surface, fill with red
-            CBox boxe = {0, 0, INT16_MAX, INT16_MAX};
-            g_pHyprOpenGL->renderRect(&boxe, CColor(1.0, 0.2, 0.2, 1.0));
+            const auto ALPHA = g_pSessionLockManager->getRedScreenAlphaForMonitor(pMonitor->ID);
+
+            CBox       monbox = {translate.x, translate.y, pMonitor->vecTransformedSize.x * scale, pMonitor->vecTransformedSize.y * scale};
+            g_pHyprOpenGL->renderRect(&monbox, CColor(1.0, 0.2, 0.2, ALPHA));
+
+            if (ALPHA < 1.f) /* animate */
+                damageMonitor(pMonitor);
         } else {
             renderSessionLockSurface(PSLS, pMonitor, now);
         }
@@ -1198,7 +1240,7 @@ void CHyprRenderer::renderMonitor(CMonitor* pMonitor) {
             CBox renderBox = {0, 0, (int)pMonitor->vecPixelSize.x, (int)pMonitor->vecPixelSize.y};
             renderWorkspace(pMonitor, g_pCompositor->getWorkspaceByID(pMonitor->activeWorkspace), &now, renderBox);
 
-            renderLockscreen(pMonitor, &now);
+            renderLockscreen(pMonitor, &now, renderBox);
 
             if (pMonitor == g_pCompositor->m_pLastMonitor) {
                 g_pHyprNotificationOverlay->draw(pMonitor);
@@ -2193,7 +2235,7 @@ void CHyprRenderer::setCursorFromName(const std::string& name, bool force) {
     if (m_bCursorHidden && !force)
         return;
 
-    wlr_cursor_set_xcursor(g_pCompositor->m_sWLRCursor, g_pCompositor->m_sWLRXCursorMgr, name.c_str());
+    g_pCursorManager->setCursorFromName(name);
 }
 
 void CHyprRenderer::ensureCursorRenderingMode() {
@@ -2413,8 +2455,10 @@ void CHyprRenderer::recheckSolitaryForMonitor(CMonitor* pMonitor) {
     }
 
     for (auto& w : g_pCompositor->m_vWindows) {
-        if (w->m_iWorkspaceID == PCANDIDATE->m_iWorkspaceID && w->m_bIsFloating && w->m_bCreatedOverFullscreen && !w->isHidden() && (w->m_bIsMapped || w->m_bFadingOut) &&
-            w.get() != PCANDIDATE)
+        if (w.get() == PCANDIDATE || (!w->m_bIsMapped && !w->m_bFadingOut) || w->isHidden())
+            continue;
+
+        if (w->m_iWorkspaceID == PCANDIDATE->m_iWorkspaceID && w->m_bIsFloating && w->m_bCreatedOverFullscreen && w->visibleOnMonitor(pMonitor))
             return;
     }
 

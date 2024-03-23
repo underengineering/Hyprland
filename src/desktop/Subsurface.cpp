@@ -117,7 +117,7 @@ void CSubsurface::recheckDamageForSubsurfaces() {
 
 void CSubsurface::onCommit() {
     // no damaging if it's not visible
-    if (!g_pHyprRenderer->shouldRenderWindow(m_pWindowParent)) {
+    if (m_pWindowParent && !g_pHyprRenderer->shouldRenderWindow(m_pWindowParent)) {
         m_vLastSize = Vector2D{m_sWLSurface.wlr()->current.width, m_sWLSurface.wlr()->current.height};
 
         static auto PLOGDAMAGE = CConfigValue<Hyprlang::INT>("debug:log_damage");
@@ -177,6 +177,7 @@ void CSubsurface::onMap() {
 
     const auto COORDS = coordsGlobal();
     CBox       box{COORDS, m_vLastSize};
+    box.expand(4);
     g_pHyprRenderer->damageBox(&box);
 
     if (m_pWindowParent)
@@ -186,6 +187,7 @@ void CSubsurface::onMap() {
 void CSubsurface::onUnmap() {
     const auto COORDS = coordsGlobal();
     CBox       box{COORDS, m_vLastSize};
+    box.expand(4);
     g_pHyprRenderer->damageBox(&box);
 
     if (m_sWLSurface.wlr() == g_pCompositor->m_pLastFocus)

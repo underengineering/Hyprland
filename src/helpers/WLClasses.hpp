@@ -3,7 +3,7 @@
 #include "../events/Events.hpp"
 #include "../defines.hpp"
 #include "wlr-layer-shell-unstable-v1-protocol.h"
-#include "../Window.hpp"
+#include "../desktop/Window.hpp"
 #include "../desktop/Subsurface.hpp"
 #include "../desktop/Popup.hpp"
 #include "AnimatedVariable.hpp"
@@ -283,24 +283,9 @@ struct SSwipeGesture {
     int         initialDirection = 0;
     float       avgSpeed         = 0;
     int         speedPoints      = 0;
+    int         touch_id         = 0;
 
     CMonitor*   pMonitor = nullptr;
-};
-
-struct STextInputV1;
-
-struct STextInput {
-    wlr_text_input_v3* pWlrInput = nullptr;
-    STextInputV1*      pV1Input  = nullptr;
-
-    wlr_surface*       pPendingSurface = nullptr;
-
-    DYNLISTENER(textInputEnable);
-    DYNLISTENER(textInputDisable);
-    DYNLISTENER(textInputCommit);
-    DYNLISTENER(textInputDestroy);
-
-    DYNLISTENER(pendingSurfaceDestroy);
 };
 
 struct SIMEKbGrab {
@@ -317,7 +302,7 @@ struct SIMEPopup {
     int                         x, y;
     int                         realX, realY;
     bool                        visible;
-    Vector2D                    lastSize;
+    CBox                        lastBox;
 
     DYNLISTENER(mapPopup);
     DYNLISTENER(unmapPopup);

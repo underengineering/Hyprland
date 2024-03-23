@@ -1,8 +1,10 @@
 #pragma once
 
 #include "../defines.hpp"
-#include "../Window.hpp"
 #include <any>
+
+class CWindow;
+class CGradientValueData;
 
 struct SWindowRenderLayoutHints {
     bool                isBorderGradient = false;

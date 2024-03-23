@@ -1,16 +1,16 @@
 #pragma once
 
-#include "defines.hpp"
-#include "desktop/Subsurface.hpp"
-#include "helpers/AnimatedVariable.hpp"
-#include "render/decorations/IHyprWindowDecoration.hpp"
+#include "../defines.hpp"
+#include "Subsurface.hpp"
+#include "../helpers/AnimatedVariable.hpp"
+#include "../render/decorations/IHyprWindowDecoration.hpp"
 #include <deque>
-#include "config/ConfigDataValues.hpp"
-#include "helpers/Vector2D.hpp"
-#include "desktop/WLSurface.hpp"
-#include "desktop/Popup.hpp"
-#include "macros.hpp"
-#include "managers/XWaylandManager.hpp"
+#include "../config/ConfigDataValues.hpp"
+#include "../helpers/Vector2D.hpp"
+#include "WLSurface.hpp"
+#include "Popup.hpp"
+#include "../macros.hpp"
+#include "../managers/XWaylandManager.hpp"
 
 enum eIdleInhibitMode {
     IDLEINHIBIT_NONE = 0,
@@ -175,13 +175,13 @@ struct SWindowRule {
     std::string szClass;
     std::string szInitialTitle;
     std::string szInitialClass;
-    int         bX11         = -1; // -1 means "ANY"
-    int         bFloating    = -1;
-    int         bFullscreen  = -1;
-    int         bPinned      = -1;
-    int         bFocus       = -1;
-    int         iOnWorkspace = -1;
-    std::string szWorkspace  = ""; // empty means any
+    int         bX11          = -1; // -1 means "ANY"
+    int         bFloating     = -1;
+    int         bFullscreen   = -1;
+    int         bPinned       = -1;
+    int         bFocus        = -1;
+    std::string szOnWorkspace = ""; // empty means any
+    std::string szWorkspace   = ""; // empty means any
 };
 
 class CWindow {
@@ -296,6 +296,7 @@ class CWindow {
     Vector2D                 m_vOriginalClosedPos;  // these will be used for calculations later on in
     Vector2D                 m_vOriginalClosedSize; // drawing the closing animations
     SWindowDecorationExtents m_eOriginalClosedExtents;
+    bool                     m_bAnimatingIn = false;
 
     // For pinned (sticky) windows
     bool m_bPinned = false;
@@ -395,6 +396,7 @@ class CWindow {
     bool                     canBeTorn();
     bool                     shouldSendFullscreenState();
     void                     setSuspended(bool suspend);
+    bool                     visibleOnMonitor(CMonitor* pMonitor);
 
     int                      getRealBorderSize();
     void                     updateSpecialRenderData();
@@ -417,6 +419,7 @@ class CWindow {
     void                     insertWindowToGroup(CWindow* pWindow);
     void                     updateGroupOutputs();
     void                     switchWithWindowInGroup(CWindow* pWindow);
+    void                     setAnimationsToMove();
 
   private:
     // For hidden windows and stuff

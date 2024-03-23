@@ -25,6 +25,8 @@ CKeybindManager::CKeybindManager() {
     m_mDispatchers["killactive"]                     = killActive;
     m_mDispatchers["closewindow"]                    = kill;
     m_mDispatchers["togglefloating"]                 = toggleActiveFloating;
+    m_mDispatchers["setfloating"]                    = setActiveFloating;
+    m_mDispatchers["settiled"]                       = setActiveTiled;
     m_mDispatchers["workspace"]                      = changeworkspace;
     m_mDispatchers["renameworkspace"]                = renameWorkspace;
     m_mDispatchers["fullscreen"]                     = fullscreenActive;
@@ -227,7 +229,6 @@ bool CKeybindManager::tryMoveFocusToMonitor(CMonitor* monitor) {
     const auto PNEWMAINWORKSPACE = g_pCompositor->getWorkspaceByID(monitor->activeWorkspace);
 
     g_pInputManager->unconstrainMouse();
-    g_pCompositor->setActiveMonitor(monitor);
     PNEWMAINWORKSPACE->rememberPrevWorkspace(PWORKSPACE);
 
     const auto PNEWWORKSPACE = monitor->specialWorkspaceID != 0 ? g_pCompositor->getWorkspaceByID(monitor->specialWorkspaceID) : PNEWMAINWORKSPACE;
@@ -236,10 +237,15 @@ bool CKeybindManager::tryMoveFocusToMonitor(CMonitor* monitor) {
     if (PNEWWINDOW) {
         g_pCompositor->focusWindow(PNEWWINDOW);
         g_pCompositor->warpCursorTo(PNEWWINDOW->middle());
+
+        g_pInputManager->m_pForcedFocus = PNEWWINDOW;
+        g_pInputManager->simulateMouseMovement();
+        g_pInputManager->m_pForcedFocus = nullptr;
     } else {
         g_pCompositor->focusWindow(nullptr);
         g_pCompositor->warpCursorTo(monitor->middle());
     }
+    g_pCompositor->setActiveMonitor(monitor);
 
     return true;
 }
@@ -319,6 +325,7 @@ bool CKeybindManager::onKeyEvent(wlr_keyboard_key_event* e, SKeyboard* pKeyboard
         .keycode            = KEYCODE,
         .modmaskAtPressTime = MODS,
         .sent               = true,
+        .submapAtPress      = m_szCurrentSelectedSubmap,
     };
 
     bool suppressEvent = false;
@@ -349,7 +356,8 @@ bool CKeybindManager::onKeyEvent(wlr_keyboard_key_event* e, SKeyboard* pKeyboard
         bool foundInPressedKeys = false;
         for (auto it = m_dPressedKeys.begin(); it != m_dPressedKeys.end();) {
             if (it->keycode == KEYCODE) {
-                suppressEvent      = handleKeybinds(MODS, *it, false);
+                if (it->submapAtPress == m_szCurrentSelectedSubmap)
+                    handleKeybinds(MODS, *it, false);
                 foundInPressedKeys = true;
                 suppressEvent      = !it->sent;
                 it                 = m_dPressedKeys.erase(it);
@@ -382,12 +390,12 @@ bool CKeybindManager::onAxisEvent(wlr_pointer_axis_event* e) {
     m_tScrollTimer.reset();
 
     bool found = false;
-    if (e->source == WLR_AXIS_SOURCE_WHEEL && e->orientation == WLR_AXIS_ORIENTATION_VERTICAL) {
+    if (e->source == WL_POINTER_AXIS_SOURCE_WHEEL && e->orientation == WL_POINTER_AXIS_VERTICAL_SCROLL) {
         if (e->delta < 0)
             found = handleKeybinds(MODS, SPressedKeyWithMods{.keyName = "mouse_down"}, true);
         else
             found = handleKeybinds(MODS, SPressedKeyWithMods{.keyName = "mouse_up"}, true);
-    } else if (e->source == WLR_AXIS_SOURCE_WHEEL && e->orientation == WLR_AXIS_ORIENTATION_HORIZONTAL) {
+    } else if (e->source == WL_POINTER_AXIS_SOURCE_WHEEL && e->orientation == WL_POINTER_AXIS_HORIZONTAL_SCROLL) {
         if (e->delta < 0)
             found = handleKeybinds(MODS, SPressedKeyWithMods{.keyName = "mouse_left"}, true);
         else
@@ -418,7 +426,7 @@ bool CKeybindManager::onMouseEvent(wlr_pointer_button_event* e) {
         .modmaskAtPressTime = MODS,
     };
 
-    if (e->state == WLR_BUTTON_PRESSED) {
+    if (e->state == WL_POINTER_BUTTON_STATE_PRESSED) {
         m_dPressedKeys.push_back(KEY);
 
         suppressEvent = handleKeybinds(MODS, KEY, true);
@@ -452,7 +460,7 @@ bool CKeybindManager::onMouseEvent(wlr_pointer_button_event* e) {
 }
 
 void CKeybindManager::resizeWithBorder(wlr_pointer_button_event* e) {
-    if (e->state == WLR_BUTTON_PRESSED) {
+    if (e->state == WL_POINTER_BUTTON_STATE_PRESSED) {
         mouse("1resizewindow");
     } else {
         mouse("0resizewindow");
@@ -528,7 +536,7 @@ bool CKeybindManager::handleKeybinds(const uint32_t modmask, const SPressedKeyWi
             const auto KBKEY = xkb_keysym_from_name(k.key.c_str(), XKB_KEYSYM_CASE_INSENSITIVE);
 
             if (KBKEY == 0) {
-                // Keysym failed to resolve from the key name of the the currently iterated bind.
+                // Keysym failed to resolve from the key name of the currently iterated bind.
                 // This happens for names such as `switch:off:Lid Switch` as well as some keys
                 // (such as yen and ro).
                 //
@@ -790,9 +798,9 @@ uint64_t CKeybindManager::spawnRaw(std::string args) {
     close(socket[1]);
     read(socket[0], &grandchild, sizeof(grandchild));
     close(socket[0]);
-    // clear child and leave child to init
+    // clear child and leave grandchild to init
     waitpid(child, NULL, 0);
-    if (child < 0) {
+    if (grandchild < 0) {
         Debug::log(LOG, "Fail to create the second fork");
         return 0;
     }
@@ -822,6 +830,18 @@ void CKeybindManager::clearKeybinds() {
 }
 
 void CKeybindManager::toggleActiveFloating(std::string args) {
+    return toggleActiveFloatingCore(args, std::nullopt);
+}
+
+void CKeybindManager::setActiveFloating(std::string args) {
+    return toggleActiveFloatingCore(args, true);
+}
+
+void CKeybindManager::setActiveTiled(std::string args) {
+    return toggleActiveFloatingCore(args, false);
+}
+
+void toggleActiveFloatingCore(std::string args, std::optional<bool> floatState) {
     CWindow* PWINDOW = nullptr;
 
     if (args != "active" && args.length() > 1)
@@ -832,12 +852,15 @@ void CKeybindManager::toggleActiveFloating(std::string args) {
     if (!PWINDOW)
         return;
 
+    if (floatState.has_value() && floatState == PWINDOW->m_bIsFloating)
+        return;
+
     // remove drag status
     g_pInputManager->currentlyDraggedWindow = nullptr;
 
     if (PWINDOW->m_sGroupData.pNextWindow && PWINDOW->m_sGroupData.pNextWindow != PWINDOW) {
+        const auto PCURRENT = PWINDOW->getGroupCurrent();
 
-        const auto PCURRENT     = PWINDOW->getGroupCurrent();
         PCURRENT->m_bIsFloating = !PCURRENT->m_bIsFloating;
         g_pLayoutManager->getCurrentLayout()->changeWindowFloatingMode(PCURRENT);
 
@@ -848,10 +871,12 @@ void CKeybindManager::toggleActiveFloating(std::string args) {
             curr->updateSpecialRenderData();
             curr = curr->m_sGroupData.pNextWindow;
         }
+
+        g_pCompositor->updateWorkspaceWindows(PWINDOW->m_iWorkspaceID);
     } else {
         PWINDOW->m_bIsFloating = !PWINDOW->m_bIsFloating;
 
-        PWINDOW->updateDynamicRules();
+        g_pCompositor->updateWorkspaceWindows(PWINDOW->m_iWorkspaceID);
 
         g_pLayoutManager->getCurrentLayout()->changeWindowFloatingMode(PWINDOW);
     }
@@ -1855,20 +1880,20 @@ void CKeybindManager::pass(std::string regexp) {
         if (g_pKeybindManager->m_uLastCode != 0)
             wlr_seat_keyboard_notify_key(g_pCompositor->m_sSeat.seat, g_pKeybindManager->m_uTimeLastMs, g_pKeybindManager->m_uLastCode - 8, WLR_BUTTON_PRESSED);
         else
-            wlr_seat_pointer_notify_button(g_pCompositor->m_sSeat.seat, g_pKeybindManager->m_uTimeLastMs, g_pKeybindManager->m_uLastMouseCode, WLR_BUTTON_PRESSED);
+            wlr_seat_pointer_notify_button(g_pCompositor->m_sSeat.seat, g_pKeybindManager->m_uTimeLastMs, g_pKeybindManager->m_uLastMouseCode, WL_POINTER_BUTTON_STATE_PRESSED);
     } else if (g_pKeybindManager->m_iPassPressed == 0)
         if (g_pKeybindManager->m_uLastCode != 0)
             wlr_seat_keyboard_notify_key(g_pCompositor->m_sSeat.seat, g_pKeybindManager->m_uTimeLastMs, g_pKeybindManager->m_uLastCode - 8, WLR_BUTTON_RELEASED);
         else
-            wlr_seat_pointer_notify_button(g_pCompositor->m_sSeat.seat, g_pKeybindManager->m_uTimeLastMs, g_pKeybindManager->m_uLastMouseCode, WLR_BUTTON_RELEASED);
+            wlr_seat_pointer_notify_button(g_pCompositor->m_sSeat.seat, g_pKeybindManager->m_uTimeLastMs, g_pKeybindManager->m_uLastMouseCode, WL_POINTER_BUTTON_STATE_RELEASED);
     else {
         // dynamic call of the dispatcher
         if (g_pKeybindManager->m_uLastCode != 0) {
             wlr_seat_keyboard_notify_key(g_pCompositor->m_sSeat.seat, g_pKeybindManager->m_uTimeLastMs, g_pKeybindManager->m_uLastCode - 8, WLR_BUTTON_PRESSED);
             wlr_seat_keyboard_notify_key(g_pCompositor->m_sSeat.seat, g_pKeybindManager->m_uTimeLastMs, g_pKeybindManager->m_uLastCode - 8, WLR_BUTTON_RELEASED);
         } else {
-            wlr_seat_pointer_notify_button(g_pCompositor->m_sSeat.seat, g_pKeybindManager->m_uTimeLastMs, g_pKeybindManager->m_uLastMouseCode, WLR_BUTTON_PRESSED);
-            wlr_seat_pointer_notify_button(g_pCompositor->m_sSeat.seat, g_pKeybindManager->m_uTimeLastMs, g_pKeybindManager->m_uLastMouseCode, WLR_BUTTON_RELEASED);
+            wlr_seat_pointer_notify_button(g_pCompositor->m_sSeat.seat, g_pKeybindManager->m_uTimeLastMs, g_pKeybindManager->m_uLastMouseCode, WL_POINTER_BUTTON_STATE_PRESSED);
+            wlr_seat_pointer_notify_button(g_pCompositor->m_sSeat.seat, g_pKeybindManager->m_uTimeLastMs, g_pKeybindManager->m_uLastMouseCode, WL_POINTER_BUTTON_STATE_RELEASED);
         }
     }
 
@@ -2014,6 +2039,9 @@ void CKeybindManager::pinActive(std::string args) {
     const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(PWINDOW->m_iWorkspaceID);
 
     PWORKSPACE->m_pLastFocusedWindow = g_pCompositor->vectorToWindowUnified(g_pInputManager->getMouseCoordsInternal(), RESERVED_EXTENTS | INPUT_EXTENTS);
+
+    g_pEventManager->postEvent(SHyprIPCEvent{"pin", std::format("{:x},{}", (uintptr_t)PWINDOW, (int)PWINDOW->m_bPinned)});
+    EMIT_HOOK_EVENT("pin", PWINDOW);
 }
 
 void CKeybindManager::mouse(std::string args) {

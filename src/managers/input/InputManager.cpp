@@ -3,6 +3,7 @@
 #include "wlr/types/wlr_switch.h"
 #include <ranges>
 #include "../../config/ConfigValue.hpp"
+#include "../../desktop/Window.hpp"
 
 CInputManager::~CInputManager() {
     m_vConstraints.clear();
@@ -68,6 +69,8 @@ void CInputManager::sendMotionEventsToFocused() {
     clock_gettime(CLOCK_MONOTONIC, &now);
 
     const auto LOCAL = getMouseCoordsInternal() - (PWINDOW ? PWINDOW->m_vRealPosition.goal() : (PLS ? Vector2D{PLS->geometry.x, PLS->geometry.y} : Vector2D{}));
+
+    m_bEmptyFocusCursorSet = false;
 
     wlr_seat_pointer_notify_enter(g_pCompositor->m_sSeat.seat, g_pCompositor->m_pLastFocus, LOCAL.x, LOCAL.y);
     wlr_seat_pointer_notify_motion(g_pCompositor->m_sSeat.seat, now.tv_sec * 1000 + now.tv_nsec / 10000000, LOCAL.x, LOCAL.y);
@@ -439,7 +442,7 @@ void CInputManager::onMouseButton(wlr_pointer_button_event* e) {
 
     m_tmrLastCursorMovement.reset();
 
-    if (e->state == WLR_BUTTON_PRESSED) {
+    if (e->state == WL_POINTER_BUTTON_STATE_PRESSED) {
         m_lCurrentlyHeldButtons.push_back(e->button);
     } else {
         if (std::find_if(m_lCurrentlyHeldButtons.begin(), m_lCurrentlyHeldButtons.end(), [&](const auto& other) { return other == e->button; }) == m_lCurrentlyHeldButtons.end())
@@ -453,7 +456,7 @@ void CInputManager::onMouseButton(wlr_pointer_button_event* e) {
         default: break;
     }
 
-    if (m_bFocusHeldByButtons && m_lCurrentlyHeldButtons.empty() && e->state == WLR_BUTTON_RELEASED) {
+    if (m_bFocusHeldByButtons && m_lCurrentlyHeldButtons.empty() && e->state == WL_POINTER_BUTTON_STATE_RELEASED) {
         if (m_bRefocusHeldByButtons)
             refocus();
         else
@@ -597,7 +600,7 @@ void CInputManager::processMouseDownNormal(wlr_pointer_button_event* e) {
 
     // clicking on border triggers resize
     // TODO detect click on LS properly
-    if (*PRESIZEONBORDER && !m_bLastFocusOnLS && e->state == WLR_BUTTON_PRESSED) {
+    if (*PRESIZEONBORDER && !m_bLastFocusOnLS && e->state == WL_POINTER_BUTTON_STATE_PRESSED) {
         if (w && !w->m_bIsFullscreen) {
             const CBox real = {w->m_vRealPosition.value().x, w->m_vRealPosition.value().y, w->m_vRealSize.value().x, w->m_vRealSize.value().y};
             const CBox grab = {real.x - BORDER_GRAB_AREA, real.y - BORDER_GRAB_AREA, real.width + 2 * BORDER_GRAB_AREA, real.height + 2 * BORDER_GRAB_AREA};
@@ -669,7 +672,7 @@ void CInputManager::onMouseWheel(wlr_pointer_axis_event* e) {
     static auto PINPUTSCROLLFACTOR    = CConfigValue<Hyprlang::FLOAT>("input:scroll_factor");
     static auto PTOUCHPADSCROLLFACTOR = CConfigValue<Hyprlang::FLOAT>("input:touchpad:scroll_factor");
 
-    auto        factor = (*PTOUCHPADSCROLLFACTOR <= 0.f || e->source == WLR_AXIS_SOURCE_FINGER ? *PTOUCHPADSCROLLFACTOR : *PINPUTSCROLLFACTOR);
+    auto        factor = (*PTOUCHPADSCROLLFACTOR <= 0.f || e->source == WL_POINTER_AXIS_SOURCE_FINGER ? *PTOUCHPADSCROLLFACTOR : *PINPUTSCROLLFACTOR);
 
     const auto  EMAP = std::unordered_map<std::string, std::any>{{"event", e}};
     EMIT_HOOK_EVENT_CANCELLABLE("mouseAxis", EMAP);
@@ -690,7 +693,7 @@ void CInputManager::onMouseWheel(wlr_pointer_axis_event* e) {
     }
 
     wlr_seat_pointer_notify_axis(g_pCompositor->m_sSeat.seat, e->time_msec, e->orientation, factor * e->delta, std::round(factor * e->delta_discrete), e->source,
-                                 WLR_AXIS_RELATIVE_DIRECTION_IDENTICAL);
+                                 WL_POINTER_AXIS_RELATIVE_DIRECTION_IDENTICAL);
 }
 
 Vector2D CInputManager::getMouseCoordsInternal() {
@@ -1415,6 +1418,11 @@ void CInputManager::setTabletConfigs() {
             Debug::log(LOG, "Setting calibration matrix for device {}", t.name);
             libinput_device_config_calibration_set_matrix(LIBINPUTDEV, MATRICES[ROTATION]);
 
+            if (g_pConfigManager->getDeviceInt(t.name, "left_handed", "input:tablet:left_handed") == 0)
+                libinput_device_config_left_handed_set(LIBINPUTDEV, 0);
+            else
+                libinput_device_config_left_handed_set(LIBINPUTDEV, 1);
+
             const auto OUTPUT   = g_pConfigManager->getDeviceString(t.name, "output", "input:tablet:output");
             const auto PMONITOR = g_pCompositor->getMonitorFromString(OUTPUT);
             if (!OUTPUT.empty() && OUTPUT != STRVAL_EMPTY && PMONITOR) {
@@ -1545,7 +1553,7 @@ void CInputManager::releaseAllMouseButtons() {
         return;
 
     for (auto& mb : buttonsCopy) {
-        wlr_seat_pointer_notify_button(g_pCompositor->m_sSeat.seat, 0, mb, WLR_BUTTON_RELEASED);
+        wlr_seat_pointer_notify_button(g_pCompositor->m_sSeat.seat, 0, mb, WL_POINTER_BUTTON_STATE_RELEASED);
     }
 
     m_lCurrentlyHeldButtons.clear();

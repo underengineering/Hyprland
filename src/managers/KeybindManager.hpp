@@ -43,6 +43,7 @@ struct SPressedKeyWithMods {
     uint32_t     keycode            = 0;
     uint32_t     modmaskAtPressTime = 0;
     bool         sent               = false;
+    std::string  submapAtPress      = "";
 };
 
 struct SParsedKey {
@@ -119,6 +120,8 @@ class CKeybindManager {
     static uint64_t spawnRaw(std::string);
     static void     toggleActiveFloating(std::string);
     static void     toggleActivePseudo(std::string);
+    static void     setActiveFloating(std::string);
+    static void     setActiveTiled(std::string);
     static void     changeworkspace(std::string);
     static void     fullscreenActive(std::string);
     static void     fakeFullscreenActive(std::string);
@@ -177,5 +180,7 @@ class CKeybindManager {
     friend class CInputManager;
     friend class CConfigManager;
 };
+
+static void                             toggleActiveFloatingCore(std::string args, std::optional<bool> floatState);
 
 inline std::unique_ptr<CKeybindManager> g_pKeybindManager;

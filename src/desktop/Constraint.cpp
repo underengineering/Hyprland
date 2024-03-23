@@ -33,8 +33,11 @@ void CConstraint::initSignals() {
 }
 
 void CConstraint::onDestroy() {
-    if (active())
-        deactivate();
+    hyprListener_setConstraintRegion.removeCallback();
+    hyprListener_destroyConstraint.removeCallback();
+
+    if (active() && isLocked())
+        g_pCompositor->warpCursorTo(logicPositionHint(), true);
 
     // this is us
     m_pOwner->m_pConstraint.reset();
@@ -92,9 +95,12 @@ void CConstraint::deactivate() {
     if (!m_bActive)
         return;
 
-    wlr_pointer_constraint_v1_send_deactivated(m_pConstraint);
     m_bActive = false;
-    g_pCompositor->warpCursorTo(logicPositionHint(), true);
+
+    wlr_pointer_constraint_v1_send_deactivated(m_pConstraint);
+
+    if (isLocked())
+        g_pCompositor->warpCursorTo(logicPositionHint(), true);
 
     if (m_pConstraint->lifetime == ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_ONESHOT)
         m_bDead = true;
@@ -103,6 +109,8 @@ void CConstraint::deactivate() {
 void CConstraint::activate() {
     if (m_bActive || m_bDead)
         return;
+
+    m_bActive = true;
 
     // TODO: hack, probably not a super duper great idea
     if (g_pCompositor->m_sSeat.seat->pointer_state.focused_surface != m_pOwner->wlr()) {
@@ -113,7 +121,6 @@ void CConstraint::activate() {
 
     g_pCompositor->warpCursorTo(logicPositionHint(), true);
     wlr_pointer_constraint_v1_send_activated(m_pConstraint);
-    m_bActive = true;
 }
 
 bool CConstraint::active() {

@@ -1,9 +1,9 @@
 #include "Window.hpp"
-#include "Compositor.hpp"
-#include "render/decorations/CHyprDropShadowDecoration.hpp"
-#include "render/decorations/CHyprGroupBarDecoration.hpp"
-#include "render/decorations/CHyprBorderDecoration.hpp"
-#include "config/ConfigValue.hpp"
+#include "../Compositor.hpp"
+#include "../render/decorations/CHyprDropShadowDecoration.hpp"
+#include "../render/decorations/CHyprGroupBarDecoration.hpp"
+#include "../render/decorations/CHyprBorderDecoration.hpp"
+#include "../config/ConfigValue.hpp"
 
 CWindow::CWindow() {
     m_vRealPosition.create(g_pConfigManager->getAnimationPropertyConfig("windowsIn"), (void*)this, AVARDAMAGE_ENTIRE);
@@ -194,7 +194,14 @@ void CWindow::updateWindowDecos() {
 
     m_vDecosToRemove.clear();
 
+    // make a copy because updateWindow can remove decos.
+    std::vector<IHyprWindowDecoration*> decos;
+
     for (auto& wd : m_dWindowDecorations) {
+        decos.push_back(wd.get());
+    }
+
+    for (auto& wd : decos) {
         wd->updateWindow(this);
     }
 }
@@ -382,6 +389,8 @@ void CWindow::moveToWorkspace(int workspaceID) {
 
     const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(m_iWorkspaceID);
 
+    setAnimationsToMove();
+
     updateSpecialRenderData();
 
     if (PWORKSPACE) {
@@ -517,6 +526,7 @@ void CWindow::onMap() {
                                           "CWindow");
 
     m_vReportedSize = m_vPendingReportedSize;
+    m_bAnimatingIn  = true;
 
     for (const auto& ctrl : g_pHyprRenderer->m_vTearingControllers) {
         if (ctrl->pWlrHint->surface != m_pWLSurface.wlr())
@@ -1050,6 +1060,9 @@ bool CWindow::opaque() {
     if (m_fAlpha.value() != 1.f || m_fActiveInactiveAlpha.value() != 1.f)
         return false;
 
+    if (m_vRealSize.goal().floor() != m_vReportedSize)
+        return false;
+
     const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(m_iWorkspaceID);
 
     if (m_pWLSurface.small() && !m_pWLSurface.m_bFillIgnoreSmall)
@@ -1129,4 +1142,17 @@ void CWindow::setSuspended(bool suspend) {
 
     wlr_xdg_toplevel_set_suspended(m_uSurface.xdg->toplevel, suspend);
     m_bSuspended = suspend;
+}
+
+bool CWindow::visibleOnMonitor(CMonitor* pMonitor) {
+    CBox wbox = {m_vRealPosition.value(), m_vRealSize.value()};
+
+    return wlr_output_layout_intersects(g_pCompositor->m_sWLROutputLayout, pMonitor->output, wbox.pWlr());
+}
+
+void CWindow::setAnimationsToMove() {
+    auto* const PANIMCFG = g_pConfigManager->getAnimationPropertyConfig("windowsMove");
+    m_vRealPosition.setConfig(PANIMCFG);
+    m_vRealSize.setConfig(PANIMCFG);
+    m_bAnimatingIn = false;
 }

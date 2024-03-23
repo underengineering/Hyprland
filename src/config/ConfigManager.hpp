@@ -13,7 +13,6 @@
 #include <optional>
 #include <functional>
 #include <xf86drmMode.h>
-#include "../Window.hpp"
 #include "../helpers/WLClasses.hpp"
 #include "../helpers/Monitor.hpp"
 #include "../helpers/VarList.hpp"
@@ -27,6 +26,8 @@
 #define CREATEANIMCFG(name, parent) animationConfig[name] = {false, "", "", 0.f, -1, &animationConfig["global"], &animationConfig[parent]}
 
 #define HANDLE void*
+
+class CWindow;
 
 struct SWorkspaceRule {
     std::string                        monitor         = "";
@@ -141,6 +142,7 @@ class CConfigManager {
     void                      addExecRule(const SExecRequestedRule&);
 
     void                      handlePluginLoads();
+    std::string               getErrors();
 
     // keywords
     std::optional<std::string> handleRawExec(const std::string&, const std::string&);
@@ -192,6 +194,7 @@ class CConfigManager {
     std::deque<std::string>                                   firstExecRequests;
 
     std::vector<std::pair<std::string, std::string>>          m_vFailedPluginConfigValues; // for plugin values of unloaded plugins
+    std::string                                               m_szConfigErrors = "";
 
     // internal methods
     void                       setAnimForChildren(SAnimationPropertyConfig* const);
