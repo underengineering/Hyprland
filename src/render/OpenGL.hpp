@@ -47,6 +47,10 @@ struct SRenderModifData {
     std::vector<std::pair<eRenderModifType, std::any>> modifs;
 
     void                                               applyToBox(CBox& box);
+    void                                               applyToRegion(CRegion& rg);
+    float                                              combinedScale();
+
+    bool                                               enabled = true;
 };
 
 struct SGLPixelFormat {
@@ -91,7 +95,7 @@ struct SMonitorRenderData {
 
 struct SCurrentRenderData {
     CMonitor*           pMonitor   = nullptr;
-    CWorkspace*         pWorkspace = nullptr;
+    PHLWORKSPACE        pWorkspace = nullptr;
     float               projection[9];
     float               savedProjection[9];
 
@@ -108,6 +112,7 @@ struct SCurrentRenderData {
     bool                mouseZoomUseMouse  = true; // true by default
     bool                useNearestNeighbor = false;
     bool                forceIntrospection = false; // cleaned in ::end()
+    bool                blockScreenShader  = false;
 
     Vector2D            primarySurfaceUVTopLeft     = Vector2D(-1, -1);
     Vector2D            primarySurfaceUVBottomRight = Vector2D(-1, -1);
@@ -138,6 +143,7 @@ class CHyprOpenGLImpl {
     void                  renderTextureMatte(const CTexture& tex, CBox* pBox, CFramebuffer& matte);
 
     void                  setMonitorTransformEnabled(bool enabled);
+    void                  setRenderModifEnabled(bool enabled);
 
     void                  saveMatrix();
     void                  setMatrixScaleTranslate(const Vector2D& translate, const float& scale);

@@ -2,33 +2,50 @@
 #include "../Compositor.hpp"
 #include "../config/ConfigValue.hpp"
 
+PHLWORKSPACE CWorkspace::create(int id, int monitorID, std::string name, bool special) {
+    PHLWORKSPACE workspace = std::make_shared<CWorkspace>(id, monitorID, name, special);
+    workspace->init(workspace);
+    return workspace;
+}
+
 CWorkspace::CWorkspace(int id, int monitorID, std::string name, bool special) {
-    const auto PMONITOR = g_pCompositor->getMonitorFromID(monitorID);
-
-    if (!PMONITOR) {
-        Debug::log(ERR, "Attempted a creation of CWorkspace with an invalid monitor?");
-        return;
-    }
-
     m_iMonitorID          = monitorID;
     m_iID                 = id;
     m_szName              = name;
     m_bIsSpecialWorkspace = special;
+}
 
-    m_vRenderOffset.m_pWorkspace = this;
-    m_vRenderOffset.create(special ? g_pConfigManager->getAnimationPropertyConfig("specialWorkspace") : g_pConfigManager->getAnimationPropertyConfig("workspaces"), nullptr,
-                           AVARDAMAGE_ENTIRE);
-    m_fAlpha.m_pWorkspace = this;
-    m_fAlpha.create(AVARTYPE_FLOAT, special ? g_pConfigManager->getAnimationPropertyConfig("specialWorkspace") : g_pConfigManager->getAnimationPropertyConfig("workspaces"),
-                    nullptr, AVARDAMAGE_ENTIRE);
+void CWorkspace::init(PHLWORKSPACE self) {
+    m_pSelf = self;
+
+    m_vRenderOffset.create(m_bIsSpecialWorkspace ? g_pConfigManager->getAnimationPropertyConfig("specialWorkspace") : g_pConfigManager->getAnimationPropertyConfig("workspaces"),
+                           self, AVARDAMAGE_ENTIRE);
+    m_fAlpha.create(AVARTYPE_FLOAT,
+                    m_bIsSpecialWorkspace ? g_pConfigManager->getAnimationPropertyConfig("specialWorkspace") : g_pConfigManager->getAnimationPropertyConfig("workspaces"), self,
+                    AVARDAMAGE_ENTIRE);
     m_fAlpha.setValueAndWarp(1.f);
 
     m_vRenderOffset.registerVar();
     m_fAlpha.registerVar();
 
-    const auto RULEFORTHIS = g_pConfigManager->getWorkspaceRuleFor(this);
+    const auto RULEFORTHIS = g_pConfigManager->getWorkspaceRuleFor(self);
     if (RULEFORTHIS.defaultName.has_value())
         m_szName = RULEFORTHIS.defaultName.value();
+
+    m_pFocusedWindowHook = g_pHookSystem->hookDynamic("closeWindow", [this](void* self, SCallbackInfo& info, std::any param) {
+        const auto PWINDOW = std::any_cast<CWindow*>(param);
+
+        if (PWINDOW == m_pLastFocusedWindow)
+            m_pLastFocusedWindow = nullptr;
+    });
+
+    m_bInert = false;
+
+    const auto WORKSPACERULE = g_pConfigManager->getWorkspaceRuleFor(self);
+    m_bPersistent            = WORKSPACERULE.isPersistent;
+
+    if (auto cmd = WORKSPACERULE.onCreatedEmptyRunCmd)
+        g_pKeybindManager->spawn(*cmd);
 
     g_pEventManager->postEvent({"createworkspace", m_szName});
     g_pEventManager->postEvent({"createworkspacev2", std::format("{},{}", m_iID, m_szName)});
@@ -40,6 +57,8 @@ CWorkspace::~CWorkspace() {
 
     Debug::log(LOG, "Destroying workspace ID {}", m_iID);
 
+    g_pHookSystem->unhook(m_pFocusedWindowHook);
+
     g_pEventManager->postEvent({"destroyworkspace", m_szName});
     g_pEventManager->postEvent({"destroyworkspacev2", std::format("{},{}", m_iID, m_szName)});
     EMIT_HOOK_EVENT("destroyWorkspace", this);
@@ -48,6 +67,16 @@ CWorkspace::~CWorkspace() {
 void CWorkspace::startAnim(bool in, bool left, bool instant) {
     const auto  ANIMSTYLE     = m_fAlpha.m_pConfig->pValues->internalStyle;
     static auto PWORKSPACEGAP = CConfigValue<Hyprlang::INT>("general:gaps_workspaces");
+
+    // set floating windows offset callbacks
+    m_vRenderOffset.setUpdateCallback([&](void*) {
+        for (auto& w : g_pCompositor->m_vWindows) {
+            if (!g_pCompositor->windowValidMapped(w.get()) || w->workspaceID() != m_iID)
+                continue;
+
+            w->onWorkspaceAnimUpdate();
+        };
+    });
 
     if (ANIMSTYLE.starts_with("slidefade")) {
         const auto PMONITOR = g_pCompositor->getMonitorFromID(m_iMonitorID);
@@ -150,13 +179,13 @@ void CWorkspace::moveToMonitor(const int& id) {
 }
 
 CWindow* CWorkspace::getLastFocusedWindow() {
-    if (!g_pCompositor->windowValidMapped(m_pLastFocusedWindow) || m_pLastFocusedWindow->m_iWorkspaceID != m_iID)
+    if (!g_pCompositor->windowValidMapped(m_pLastFocusedWindow) || m_pLastFocusedWindow->workspaceID() != m_iID)
         return nullptr;
 
     return m_pLastFocusedWindow;
 }
 
-void CWorkspace::rememberPrevWorkspace(const CWorkspace* prev) {
+void CWorkspace::rememberPrevWorkspace(const PHLWORKSPACE& prev) {
     if (!prev) {
         m_sPrevWorkspace.iID  = -1;
         m_sPrevWorkspace.name = "";
@@ -201,7 +230,7 @@ bool CWorkspace::matchesStaticSelector(const std::string& selector_) {
 
     } else if (selector.starts_with("name:")) {
         return m_szName == selector.substr(5);
-    } else if (selector.starts_with("special:")) {
+    } else if (selector.starts_with("special")) {
         return m_szName == selector;
     } else {
         // parse selector
@@ -385,4 +414,15 @@ bool CWorkspace::matchesStaticSelector(const std::string& selector_) {
 
     UNREACHABLE();
     return false;
+}
+
+void CWorkspace::markInert() {
+    m_bInert     = true;
+    m_iID        = WORKSPACE_INVALID;
+    m_iMonitorID = -1;
+    m_bVisible   = false;
+}
+
+bool CWorkspace::inert() {
+    return m_bInert;
 }

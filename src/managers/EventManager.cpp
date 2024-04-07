@@ -15,6 +15,7 @@
 #include <sys/ioctl.h>
 
 #include <string>
+#include <algorithm>
 
 CEventManager::CEventManager() {}
 

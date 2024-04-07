@@ -1,6 +1,7 @@
 #pragma once
 
 #include "IHyprLayout.hpp"
+#include "../desktop/DesktopTypes.hpp"
 
 #include <list>
 #include <deque>
@@ -59,7 +60,7 @@ class CHyprDwindleLayout : public IHyprLayout {
     virtual void                     alterSplitRatio(CWindow*, float, bool);
     virtual std::string              getLayoutName();
     virtual void                     replaceWindowDataWith(CWindow* from, CWindow* to);
-    virtual Vector2D                 predictSizeForNewWindow();
+    virtual Vector2D                 predictSizeForNewWindowTiled();
 
     virtual void                     onEnable();
     virtual void                     onDisable();
@@ -78,7 +79,7 @@ class CHyprDwindleLayout : public IHyprLayout {
 
     int                     getNodesOnWorkspace(const int&);
     void                    applyNodeDataToWindow(SDwindleNodeData*, bool force = false);
-    void                    calculateWorkspace(const int& ws);
+    void                    calculateWorkspace(const PHLWORKSPACE& pWorkspace);
     SDwindleNodeData*       getNodeFromWindow(CWindow*);
     SDwindleNodeData*       getFirstNodeOnWorkspace(const int&);
     SDwindleNodeData*       getClosestNodeOnWorkspace(const int&, const Vector2D&);

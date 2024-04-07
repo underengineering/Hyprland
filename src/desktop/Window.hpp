@@ -11,6 +11,7 @@
 #include "Popup.hpp"
 #include "../macros.hpp"
 #include "../managers/XWaylandManager.hpp"
+#include "DesktopTypes.hpp"
 
 enum eIdleInhibitMode {
     IDLEINHIBIT_NONE = 0,
@@ -237,25 +238,28 @@ class CWindow {
     Vector2D m_vLastFloatingSize;
     Vector2D m_vLastFloatingPosition;
 
+    // for floating window offset in workspace animations
+    Vector2D m_vFloatingOffset = Vector2D(0, 0);
+
     // this is used for pseudotiling
-    bool        m_bIsPseudotiled = false;
-    Vector2D    m_vPseudoSize    = Vector2D(0, 0);
+    bool         m_bIsPseudotiled = false;
+    Vector2D     m_vPseudoSize    = Vector2D(0, 0);
 
-    bool        m_bFirstMap           = false; // for layouts
-    bool        m_bIsFloating         = false;
-    bool        m_bDraggingTiled      = false; // for dragging around tiled windows
-    bool        m_bIsFullscreen       = false;
-    bool        m_bDontSendFullscreen = false;
-    bool        m_bWasMaximized       = false;
-    uint64_t    m_iMonitorID          = -1;
-    std::string m_szTitle             = "";
-    std::string m_szInitialTitle      = "";
-    std::string m_szInitialClass      = "";
-    int         m_iWorkspaceID        = -1;
+    bool         m_bFirstMap           = false; // for layouts
+    bool         m_bIsFloating         = false;
+    bool         m_bDraggingTiled      = false; // for dragging around tiled windows
+    bool         m_bIsFullscreen       = false;
+    bool         m_bDontSendFullscreen = false;
+    bool         m_bWasMaximized       = false;
+    uint64_t     m_iMonitorID          = -1;
+    std::string  m_szTitle             = "";
+    std::string  m_szInitialTitle      = "";
+    std::string  m_szInitialClass      = "";
+    PHLWORKSPACE m_pWorkspace;
 
-    bool        m_bIsMapped = false;
+    bool         m_bIsMapped = false;
 
-    bool        m_bRequestsFloat = false;
+    bool         m_bRequestsFloat = false;
 
     // This is for fullscreen apps
     bool m_bCreatedOverFullscreen = false;
@@ -381,7 +385,7 @@ class CWindow {
     void                     destroyToplevelHandle();
     void                     updateToplevel();
     void                     updateSurfaceScaleTransformDetails();
-    void                     moveToWorkspace(int);
+    void                     moveToWorkspace(PHLWORKSPACE);
     CWindow*                 X11TransientFor();
     void                     onUnmap();
     void                     onMap();
@@ -397,6 +401,8 @@ class CWindow {
     bool                     shouldSendFullscreenState();
     void                     setSuspended(bool suspend);
     bool                     visibleOnMonitor(CMonitor* pMonitor);
+    int                      workspaceID();
+    bool                     onSpecialWorkspace();
 
     int                      getRealBorderSize();
     void                     updateSpecialRenderData();
@@ -404,6 +410,7 @@ class CWindow {
     void                     onBorderAngleAnimEnd(void* ptr);
     bool                     isInCurvedCorner(double x, double y);
     bool                     hasPopupAt(const Vector2D& pos);
+    int                      popupsCount();
 
     void                     applyGroupRules();
     void                     createGroup();
@@ -420,11 +427,13 @@ class CWindow {
     void                     updateGroupOutputs();
     void                     switchWithWindowInGroup(CWindow* pWindow);
     void                     setAnimationsToMove();
+    void                     onWorkspaceAnimUpdate();
 
   private:
     // For hidden windows and stuff
-    bool m_bHidden    = false;
-    bool m_bSuspended = false;
+    bool m_bHidden        = false;
+    bool m_bSuspended     = false;
+    int  m_iLastWorkspace = WORKSPACE_INVALID;
 };
 
 /**
@@ -459,7 +468,7 @@ struct std::formatter<CWindow*, CharT> : std::formatter<CharT> {
         std::format_to(out, "[");
         std::format_to(out, "Window {:x}: title: \"{}\"", (uintptr_t)w, w->m_szTitle);
         if (formatWorkspace)
-            std::format_to(out, ", workspace: {}", w->m_iWorkspaceID);
+            std::format_to(out, ", workspace: {}", w->m_pWorkspace ? w->workspaceID() : WORKSPACE_INVALID);
         if (formatMonitor)
             std::format_to(out, ", monitor: {}", w->m_iMonitorID);
         if (formatClass)

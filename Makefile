@@ -36,15 +36,21 @@ install:
 
 	mkdir -p ${PREFIX}/share/wayland-sessions
 	mkdir -p ${PREFIX}/bin
+	mkdir -p ${PREFIX}/share/hyprland
+	mkdir -p ${PREFIX}/share/bash-completion
+	mkdir -p ${PREFIX}/share/fish/completions
+	mkdir -p ${PREFIX}/share/zsh/site-functions
 	cp -f ./build/Hyprland ${PREFIX}/bin
 	cp -f ./build/hyprctl/hyprctl ${PREFIX}/bin
 	cp -f ./build/hyprpm/hyprpm ${PREFIX}/bin
+	cp -f ./hyprctl/hyprctl.bash ${PREFIX}/share/bash-completion/hyprctl
+	cp -f ./hyprctl/hyprctl.fish ${PREFIX}/share/fish/completions/hyprctl.fish
+	cp -f ./hyprctl/hyprctl.zsh ${PREFIX}/share/zsh/site-functions/_hyprctl
 	chmod 755 ${PREFIX}/bin/Hyprland
 	chmod 755 ${PREFIX}/bin/hyprctl
 	chmod 755 ${PREFIX}/bin/hyprpm
 	cd ${PREFIX}/bin && ln -sf Hyprland hyprland
 	if [ ! -f ${PREFIX}/share/wayland-sessions/hyprland.desktop ]; then cp ./example/hyprland.desktop ${PREFIX}/share/wayland-sessions; fi
-	mkdir -p ${PREFIX}/share/hyprland
 	cp ./assets/wall* ${PREFIX}/share/hyprland
 	mkdir -p ${PREFIX}/share/xdg-desktop-portal
 	cp ./assets/hyprland-portals.conf ${PREFIX}/share/xdg-desktop-portal
@@ -75,6 +81,7 @@ pluginenv:
 installheaders:
 	@if [ ! -f ./src/version.h ]; then echo -en "You need to run $(MAKE) all first.\n" && exit 1; fi
 
+	rm -fr ${PREFIX}/include/hyprland
 	mkdir -p ${PREFIX}/include/hyprland
 	mkdir -p ${PREFIX}/include/hyprland/protocols
 	mkdir -p ${PREFIX}/include/hyprland/wlroots
@@ -114,6 +121,10 @@ asan:
 
 	rm -rf ./wayland
 	git reset --hard
+
+	@echo -en "If you want to apply a patch, input its path (leave empty for none):\n"
+	@read patchvar
+	@if [-n "$patchvar"]; then patch -p1 < $patchvar || echo ""; else echo "No patch specified"; fi
 
 	git clone --recursive https://gitlab.freedesktop.org/wayland/wayland
 	cd wayland && patch -p1 < ../scripts/waylandStatic.diff && meson setup build --buildtype=debug -Db_sanitize=address -Ddocumentation=false && ninja -C build && cd ..

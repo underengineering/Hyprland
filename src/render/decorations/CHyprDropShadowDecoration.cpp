@@ -41,9 +41,37 @@ void CHyprDropShadowDecoration::damageEntire() {
     if (*PSHADOWS != 1)
         return; // disabled
 
-    CBox dm = {m_vLastWindowPos.x - m_seExtents.topLeft.x, m_vLastWindowPos.y - m_seExtents.topLeft.y, m_vLastWindowSize.x + m_seExtents.topLeft.x + m_seExtents.bottomRight.x,
-               m_vLastWindowSize.y + m_seExtents.topLeft.y + m_seExtents.bottomRight.y};
-    g_pHyprRenderer->damageBox(&dm);
+    CBox       shadowBox = {m_pWindow->m_vRealPosition.value().x - m_seExtents.topLeft.x, m_pWindow->m_vRealPosition.value().y - m_seExtents.topLeft.y,
+                            m_pWindow->m_vRealSize.value().x + m_seExtents.topLeft.x + m_seExtents.bottomRight.x,
+                            m_pWindow->m_vRealSize.value().y + m_seExtents.topLeft.y + m_seExtents.bottomRight.y};
+
+    const auto PWORKSPACE = m_pWindow->m_pWorkspace;
+    if (PWORKSPACE && PWORKSPACE->m_vRenderOffset.isBeingAnimated() && !m_pWindow->m_bPinned)
+        shadowBox.translate(PWORKSPACE->m_vRenderOffset.value());
+    shadowBox.translate(m_pWindow->m_vFloatingOffset);
+
+    static auto PSHADOWIGNOREWINDOW = CConfigValue<Hyprlang::INT>("decoration:shadow_ignore_window");
+    const auto  ROUNDING            = m_pWindow->rounding();
+    const auto  ROUNDINGSIZE        = ROUNDING - M_SQRT1_2 * ROUNDING + 1;
+
+    CRegion     shadowRegion(shadowBox);
+    if (*PSHADOWIGNOREWINDOW) {
+        CBox surfaceBox = m_pWindow->getWindowMainSurfaceBox();
+        if (PWORKSPACE && PWORKSPACE->m_vRenderOffset.isBeingAnimated() && !m_pWindow->m_bPinned)
+            surfaceBox.translate(PWORKSPACE->m_vRenderOffset.value());
+        surfaceBox.translate(m_pWindow->m_vFloatingOffset);
+        surfaceBox.expand(-ROUNDINGSIZE);
+        shadowRegion.subtract(CRegion(surfaceBox));
+    }
+
+    for (auto& m : g_pCompositor->m_vMonitors) {
+        if (!g_pHyprRenderer->shouldRenderWindow(m_pWindow, m.get())) {
+            const CRegion monitorRegion({m->vecPosition, m->vecSize});
+            shadowRegion.subtract(monitorRegion);
+        }
+    }
+
+    g_pHyprRenderer->damageRegion(shadowRegion);
 }
 
 void CHyprDropShadowDecoration::updateWindow(CWindow* pWindow) {
@@ -54,7 +82,7 @@ void CHyprDropShadowDecoration::updateWindow(CWindow* pWindow) {
     m_bLastWindowBoxWithDecos = g_pDecorationPositioner->getBoxWithIncludedDecos(pWindow);
 }
 
-void CHyprDropShadowDecoration::draw(CMonitor* pMonitor, float a, const Vector2D& offset) {
+void CHyprDropShadowDecoration::draw(CMonitor* pMonitor, float a) {
 
     if (!g_pCompositor->windowValidMapped(m_pWindow))
         return;
@@ -82,7 +110,7 @@ void CHyprDropShadowDecoration::draw(CMonitor* pMonitor, float a, const Vector2D
 
     const auto ROUNDINGBASE    = m_pWindow->rounding();
     const auto ROUNDING        = ROUNDINGBASE > 0 ? ROUNDINGBASE + m_pWindow->getRealBorderSize() : 0;
-    const auto PWORKSPACE      = g_pCompositor->getWorkspaceByID(m_pWindow->m_iWorkspaceID);
+    const auto PWORKSPACE      = m_pWindow->m_pWorkspace;
     const auto WORKSPACEOFFSET = PWORKSPACE && !m_pWindow->m_bPinned ? PWORKSPACE->m_vRenderOffset.value() : Vector2D();
 
     // draw the shadow
@@ -98,12 +126,13 @@ void CHyprDropShadowDecoration::draw(CMonitor* pMonitor, float a, const Vector2D
     // scale the box in relation to the center of the box
     fullBox.scaleFromCenter(SHADOWSCALE).translate(*PSHADOWOFFSET);
 
+    updateWindow(m_pWindow);
     m_vLastWindowPos += WORKSPACEOFFSET;
     m_seExtents = {{m_vLastWindowPos.x - fullBox.x - pMonitor->vecPosition.x + 2, m_vLastWindowPos.y - fullBox.y - pMonitor->vecPosition.y + 2},
                    {fullBox.x + fullBox.width + pMonitor->vecPosition.x - m_vLastWindowPos.x - m_vLastWindowSize.x + 2,
                     fullBox.y + fullBox.height + pMonitor->vecPosition.y - m_vLastWindowPos.y - m_vLastWindowSize.y + 2}};
 
-    fullBox.translate(offset);
+    fullBox.translate(m_pWindow->m_vFloatingOffset);
 
     if (fullBox.width < 1 || fullBox.height < 1)
         return; // don't draw invisible shadows
@@ -125,6 +154,9 @@ void CHyprDropShadowDecoration::draw(CMonitor* pMonitor, float a, const Vector2D
         windowBox.translate(-pMonitor->vecPosition + WORKSPACEOFFSET);
         withDecos.translate(-pMonitor->vecPosition + WORKSPACEOFFSET);
 
+        windowBox.translate(m_pWindow->m_vFloatingOffset);
+        withDecos.translate(m_pWindow->m_vFloatingOffset);
+
         auto scaledExtentss = withDecos.extentsFrom(windowBox);
         scaledExtentss      = scaledExtentss * pMonitor->scale;
         scaledExtentss      = scaledExtentss.round();
@@ -139,6 +171,7 @@ void CHyprDropShadowDecoration::draw(CMonitor* pMonitor, float a, const Vector2D
 
         g_pHyprOpenGL->m_RenderData.damage = fullBox;
         g_pHyprOpenGL->m_RenderData.damage.subtract(windowBox.copy().expand(-ROUNDING * pMonitor->scale)).intersect(saveDamage);
+        g_pHyprOpenGL->m_RenderData.renderModif.applyToRegion(g_pHyprOpenGL->m_RenderData.damage);
 
         alphaFB.bind();
 
@@ -162,7 +195,9 @@ void CHyprDropShadowDecoration::draw(CMonitor* pMonitor, float a, const Vector2D
 
         CBox monbox = {0, 0, pMonitor->vecTransformedSize.x, pMonitor->vecTransformedSize.y};
         g_pHyprOpenGL->setMonitorTransformEnabled(true);
+        g_pHyprOpenGL->setRenderModifEnabled(false);
         g_pHyprOpenGL->renderTextureMatte(alphaSwapFB.m_cTex, &monbox, alphaFB);
+        g_pHyprOpenGL->setRenderModifEnabled(true);
         g_pHyprOpenGL->setMonitorTransformEnabled(false);
 
         g_pHyprOpenGL->m_RenderData.damage = saveDamage;

@@ -147,6 +147,7 @@ bool CHyprOpenGLImpl::passRequiresIntrospection(CMonitor* pMonitor) {
     static auto PXRAY        = CConfigValue<Hyprlang::INT>("decoration:blur:xray");
     static auto POPTIM       = CConfigValue<Hyprlang::INT>("decoration:blur:new_optimizations");
     static auto PBLURSPECIAL = CConfigValue<Hyprlang::INT>("decoration:blur:special");
+    static auto PBLURPOPUPS  = CConfigValue<Hyprlang::INT>("decoration:blur:popups");
 
     if (m_RenderData.mouseZoomFactor != 1.0 || g_pHyprRenderer->m_bCrashingInProgress)
         return true;
@@ -167,11 +168,17 @@ bool CHyprOpenGLImpl::passRequiresIntrospection(CMonitor* pMonitor) {
         const auto XRAYMODE = ls->xray == -1 ? *PXRAY : ls->xray;
         if (ls->forceBlur && !XRAYMODE)
             return true;
+
+        if (ls->popupsCount() > 0 && ls->forceBlurPopups)
+            return true;
     }
 
     for (auto& ls : pMonitor->m_aLayerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_TOP]) {
         const auto XRAYMODE = ls->xray == -1 ? *PXRAY : ls->xray;
         if (ls->forceBlur && !XRAYMODE)
+            return true;
+
+        if (ls->popupsCount() > 0 && ls->forceBlurPopups)
             return true;
     }
 
@@ -179,10 +186,16 @@ bool CHyprOpenGLImpl::passRequiresIntrospection(CMonitor* pMonitor) {
     for (auto& ls : pMonitor->m_aLayerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND]) {
         if (ls->forceBlur)
             return true;
+
+        if (ls->popupsCount() > 0 && ls->forceBlurPopups)
+            return true;
     }
 
     for (auto& ls : pMonitor->m_aLayerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM]) {
         if (ls->forceBlur)
+            return true;
+
+        if (ls->popupsCount() > 0 && ls->forceBlurPopups)
             return true;
     }
 
@@ -202,10 +215,16 @@ bool CHyprOpenGLImpl::passRequiresIntrospection(CMonitor* pMonitor) {
         return false;
 
     for (auto& w : g_pCompositor->m_vWindows) {
-        if (!w->m_bIsMapped || w->isHidden() || (!w->m_bIsFloating && *POPTIM && !g_pCompositor->isWorkspaceSpecial(w->m_iWorkspaceID)))
+        if (!w->m_bIsMapped || w->isHidden())
             continue;
 
         if (!g_pHyprRenderer->shouldRenderWindow(w.get()))
+            continue;
+
+        if (w->popupsCount() > 0 && *PBLURPOPUPS)
+            return true;
+
+        if (!w->m_bIsFloating && *POPTIM && !w->onSpecialWorkspace())
             continue;
 
         if (w->m_sAdditionalConfigData.forceNoBlur.toUnderlying() == true || w->m_sAdditionalConfigData.xray.toUnderlying() == true)
@@ -346,7 +365,7 @@ void CHyprOpenGLImpl::end() {
         }
 
         m_bEndFrame         = true;
-        m_bApplyFinalShader = true;
+        m_bApplyFinalShader = !m_RenderData.blockScreenShader;
         if (m_RenderData.mouseZoomUseMouse)
             m_RenderData.useNearestNeighbor = true;
 
@@ -369,6 +388,7 @@ void CHyprOpenGLImpl::end() {
     m_RenderData.mouseZoomFactor    = 1.f;
     m_RenderData.mouseZoomUseMouse  = true;
     m_RenderData.forceIntrospection = false;
+    m_RenderData.blockScreenShader  = false;
     m_RenderData.currentFB          = nullptr;
     m_RenderData.mainFB             = nullptr;
     m_RenderData.outFB              = nullptr;
@@ -776,6 +796,8 @@ void CHyprOpenGLImpl::renderRectWithDamage(CBox* box, const CColor& col, CRegion
     }
 
     glDisableVertexAttribArray(m_RenderData.pCurrentMonData->m_shQUAD.posAttrib);
+
+    scissor((CBox*)nullptr);
 }
 
 void CHyprOpenGLImpl::renderTexture(wlr_texture* tex, CBox* pBox, float alpha, int round, bool allowCustomUV) {
@@ -1323,7 +1345,7 @@ void CHyprOpenGLImpl::preRender(CMonitor* pMonitor) {
 
         const auto  PSURFACE = pWindow->m_pWLSurface.wlr();
 
-        const auto  PWORKSPACE = g_pCompositor->getWorkspaceByID(pWindow->m_iWorkspaceID);
+        const auto  PWORKSPACE = pWindow->m_pWorkspace;
         const float A          = pWindow->m_fAlpha.value() * pWindow->m_fActiveInactiveAlpha.value() * PWORKSPACE->m_fAlpha.value();
 
         if (A >= 1.f) {
@@ -1345,7 +1367,7 @@ void CHyprOpenGLImpl::preRender(CMonitor* pMonitor) {
 
     bool hasWindows = false;
     for (auto& w : g_pCompositor->m_vWindows) {
-        if (w->m_iWorkspaceID == pMonitor->activeWorkspace && !w->isHidden() && w->m_bIsMapped && (!w->m_bIsFloating || *PBLURXRAY)) {
+        if (w->m_pWorkspace == pMonitor->activeWorkspace && !w->isHidden() && w->m_bIsMapped && (!w->m_bIsFloating || *PBLURXRAY)) {
 
             // check if window is valid
             if (!windowShouldBeBlurred(w.get()))
@@ -1437,7 +1459,7 @@ bool CHyprOpenGLImpl::shouldUseNewBlurOptimizations(SLayerSurface* pLayer, CWind
     if (pLayer && pLayer->xray == 0)
         return false;
 
-    if ((*PBLURNEWOPTIMIZE && pWindow && !pWindow->m_bIsFloating && !g_pCompositor->isWorkspaceSpecial(pWindow->m_iWorkspaceID)) || *PBLURXRAY)
+    if ((*PBLURNEWOPTIMIZE && pWindow && !pWindow->m_bIsFloating && !pWindow->onSpecialWorkspace()) || *PBLURXRAY)
         return true;
 
     if ((pLayer && pLayer->xray == 1) || (pWindow && pWindow->m_sAdditionalConfigData.xray.toUnderlying() == 1))
@@ -1460,6 +1482,8 @@ void CHyprOpenGLImpl::renderTextureWithBlur(const CTexture& tex, CBox* pBox, flo
 
     if (texDamage.empty())
         return;
+
+    m_RenderData.renderModif.applyToRegion(texDamage);
 
     if (*PBLURENABLED == 0 || (*PNOBLUROVERSIZED && m_RenderData.primarySurfaceUVTopLeft != Vector2D(-1, -1)) ||
         (m_pCurrentWindow && (m_pCurrentWindow->m_sAdditionalConfigData.forceNoBlur || m_pCurrentWindow->m_sAdditionalConfigData.forceRGBX))) {
@@ -1490,7 +1514,9 @@ void CHyprOpenGLImpl::renderTextureWithBlur(const CTexture& tex, CBox* pBox, flo
 
     CFramebuffer* POUTFB = nullptr;
     if (!USENEWOPTIMIZE) {
-        inverseOpaque.translate({pBox->x, pBox->y}).intersect(texDamage);
+        inverseOpaque.translate({pBox->x, pBox->y});
+        m_RenderData.renderModif.applyToRegion(inverseOpaque);
+        inverseOpaque.intersect(texDamage);
 
         POUTFB = blurMainFramebufferWithDamage(a, &inverseOpaque);
     } else {
@@ -1523,12 +1549,13 @@ void CHyprOpenGLImpl::renderTextureWithBlur(const CTexture& tex, CBox* pBox, flo
     CBox MONITORBOX = {0, 0, m_RenderData.pMonitor->vecTransformedSize.x, m_RenderData.pMonitor->vecTransformedSize.y};
     // render our great blurred FB
     static auto PBLURIGNOREOPACITY = CConfigValue<Hyprlang::INT>("decoration:blur:ignore_opacity");
-    m_bEndFrame                    = true; // fix transformed
-    const auto SAVEDRENDERMODIF    = m_RenderData.renderModif;
-    m_RenderData.renderModif       = {}; // fix shit
+    setMonitorTransformEnabled(true);
+    if (!USENEWOPTIMIZE)
+        setRenderModifEnabled(false);
     renderTextureInternalWithDamage(POUTFB->m_cTex, &MONITORBOX, *PBLURIGNOREOPACITY ? blurA : a * blurA, &texDamage, 0, false, false, false);
-    m_bEndFrame              = false;
-    m_RenderData.renderModif = SAVEDRENDERMODIF;
+    if (!USENEWOPTIMIZE)
+        setRenderModifEnabled(true);
+    setMonitorTransformEnabled(false);
 
     // render the window, but clear stencil
     glClearStencil(0);
@@ -1568,6 +1595,7 @@ void CHyprOpenGLImpl::renderBorder(CBox* box, const CGradientValueData& grad, in
         return;
 
     int scaledBorderSize = std::round(borderSize * m_RenderData.pMonitor->scale);
+    scaledBorderSize     = std::round(scaledBorderSize * m_RenderData.renderModif.combinedScale());
 
     // adjust box
     box->x -= scaledBorderSize;
@@ -2204,6 +2232,10 @@ void CHyprOpenGLImpl::setMonitorTransformEnabled(bool enabled) {
     m_bEndFrame = enabled;
 }
 
+void CHyprOpenGLImpl::setRenderModifEnabled(bool enabled) {
+    m_RenderData.renderModif.enabled = enabled;
+}
+
 inline const SGLPixelFormat GLES2_FORMATS[] = {
     {
         .drmFormat = DRM_FORMAT_ARGB8888,
@@ -2339,6 +2371,9 @@ const SGLPixelFormat* CHyprOpenGLImpl::getPixelFormatFromDRM(uint32_t drmFormat)
 }
 
 void SRenderModifData::applyToBox(CBox& box) {
+    if (!enabled)
+        return;
+
     for (auto& [type, val] : modifs) {
         try {
             switch (type) {
@@ -2358,4 +2393,40 @@ void SRenderModifData::applyToBox(CBox& box) {
             }
         } catch (std::bad_any_cast& e) { Debug::log(ERR, "BUG THIS OR PLUGIN ERROR: caught a bad_any_cast in SRenderModifData::applyToBox!"); }
     }
+}
+
+void SRenderModifData::applyToRegion(CRegion& rg) {
+    if (!enabled)
+        return;
+
+    for (auto& [type, val] : modifs) {
+        try {
+            switch (type) {
+                case RMOD_TYPE_SCALE: rg.scale(std::any_cast<float>(val)); break;
+                case RMOD_TYPE_SCALECENTER: rg.scale(std::any_cast<float>(val)); break;
+                case RMOD_TYPE_TRANSLATE: rg.translate(std::any_cast<Vector2D>(val)); break;
+                case RMOD_TYPE_ROTATE: /* TODO */
+                case RMOD_TYPE_ROTATECENTER: break;
+            }
+        } catch (std::bad_any_cast& e) { Debug::log(ERR, "BUG THIS OR PLUGIN ERROR: caught a bad_any_cast in SRenderModifData::applyToRegion!"); }
+    }
+}
+
+float SRenderModifData::combinedScale() {
+    if (!enabled)
+        return 1;
+
+    float scale = 1.f;
+    for (auto& [type, val] : modifs) {
+        try {
+            switch (type) {
+                case RMOD_TYPE_SCALE: scale *= std::any_cast<float>(val); break;
+                case RMOD_TYPE_SCALECENTER:
+                case RMOD_TYPE_TRANSLATE:
+                case RMOD_TYPE_ROTATE:
+                case RMOD_TYPE_ROTATECENTER: break;
+            }
+        } catch (std::bad_any_cast& e) { Debug::log(ERR, "BUG THIS OR PLUGIN ERROR: caught a bad_any_cast in SRenderModifData::combinedScale!"); }
+    }
+    return scale;
 }

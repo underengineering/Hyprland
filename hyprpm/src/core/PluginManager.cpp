@@ -70,10 +70,22 @@ SHyprlandVersion CPluginManager::getHyprlandVersion() {
     std::string hlbranch = HLVERCALL.substr(HLVERCALL.find("from branch") + 12);
     hlbranch             = hlbranch.substr(0, hlbranch.find(" at commit "));
 
-    if (m_bVerbose)
-        std::cout << Colors::BLUE << "[v] " << Colors::RESET << "parsed commit " << hlcommit << " at branch " << hlbranch << "\n";
+    std::string hlcommits;
 
-    ver = SHyprlandVersion{hlbranch, hlcommit};
+    if (HLVERCALL.contains("commits:")) {
+        hlcommits = HLVERCALL.substr(HLVERCALL.find("commits:") + 9);
+        hlcommits = hlcommits.substr(0, hlcommits.find(" "));
+    }
+
+    int commits = 0;
+    try {
+        commits = std::stoi(hlcommits);
+    } catch (...) { ; }
+
+    if (m_bVerbose)
+        std::cout << Colors::BLUE << "[v] " << Colors::RESET << "parsed commit " << hlcommit << " at branch " << hlbranch << ", commits " << commits << "\n";
+
+    ver = SHyprlandVersion{hlbranch, hlcommit, commits};
     return ver;
 }
 
@@ -214,6 +226,12 @@ bool CPluginManager::addNewPluginRepo(const std::string& url, const std::string&
     for (auto& p : pManifest->m_vPlugins) {
         std::string out;
 
+        if (p.since > HLVER.commits && HLVER.commits >= 1 /* for --depth 1 clones, we can't check this. */) {
+            progress.printMessageAbove(std::string{Colors::RED} + "✖" + Colors::RESET + " Not building " + p.name + ": your Hyprland version is too old.\n");
+            p.failed = true;
+            continue;
+        }
+
         progress.printMessageAbove(std::string{Colors::RESET} + " → Building " + p.name);
 
         for (auto& bs : p.buildSteps) {
@@ -225,10 +243,12 @@ bool CPluginManager::addNewPluginRepo(const std::string& url, const std::string&
             std::cout << Colors::BLUE << "[v] " << Colors::RESET << "shell returned: " << out << "\n";
 
         if (!std::filesystem::exists("/tmp/hyprpm/new/" + p.output)) {
-            progress.printMessageAbove(std::string{Colors::RED} + "✖" + Colors::RESET + " Plugin " + p.name + " failed to build.\n");
+            progress.printMessageAbove(std::string{Colors::RED} + "✖" + Colors::RESET + " Plugin " + p.name + " failed to build.\n" +
+                                       "  This likely means that the plugin is either outdated, not yet available for your version, or broken.\n  If you are on -git, update "
+                                       "first.\n  Try re-running with -v to see "
+                                       "more verbose output.\n");
 
             p.failed = true;
-
             continue;
         }
 
@@ -333,7 +353,12 @@ eHeadersErrors CPluginManager::headersValid() {
     std::string verHeaderContent((std::istreambuf_iterator<char>(ifs)), (std::istreambuf_iterator<char>()));
     ifs.close();
 
-    std::string hash = verHeaderContent.substr(verHeaderContent.find("#define GIT_COMMIT_HASH") + 23);
+    const auto HASHPOS = verHeaderContent.find("#define GIT_COMMIT_HASH");
+
+    if (HASHPOS == std::string::npos || HASHPOS + 23 >= verHeaderContent.length())
+        return HEADERS_CORRUPTED;
+
+    std::string hash = verHeaderContent.substr(HASHPOS + 23);
     hash             = hash.substr(0, hash.find_first_of('\n'));
     hash             = hash.substr(hash.find_first_of('"') + 1);
     hash             = hash.substr(0, hash.find_first_of('"'));
@@ -505,7 +530,7 @@ bool CPluginManager::updatePlugins(bool forceUpdateAll) {
         if (!repo.rev.empty()) {
             progress.printMessageAbove(std::string{Colors::RESET} + " → Plugin has revision set, resetting: " + repo.rev);
 
-            std::string ret = execAndGet("git -C /tmp/hyprpm reset --hard --recurse-submodules " + repo.rev);
+            std::string ret = execAndGet("git -C /tmp/hyprpm/update reset --hard --recurse-submodules " + repo.rev);
             if (ret.compare(0, 6, "fatal:") == 0) {
                 std::cout << "\n" << std::string{Colors::RED} + "✖" + Colors::RESET + " could not check out revision " + repo.rev + ": shell returned:\n" + ret;
                 return false;
@@ -571,9 +596,14 @@ bool CPluginManager::updatePlugins(bool forceUpdateAll) {
             }
         }
 
-        bool failed = false;
         for (auto& p : pManifest->m_vPlugins) {
             std::string out;
+
+            if (p.since > HLVER.commits && HLVER.commits >= 1 /* for --depth 1 clones, we can't check this. */) {
+                progress.printMessageAbove(std::string{Colors::RED} + "✖" + Colors::RESET + " Not building " + p.name + ": your Hyprland version is too old.\n");
+                p.failed = true;
+                continue;
+            }
 
             progress.printMessageAbove(std::string{Colors::RESET} + " → Building " + p.name);
 
@@ -586,16 +616,17 @@ bool CPluginManager::updatePlugins(bool forceUpdateAll) {
                 std::cout << Colors::BLUE << "[v] " << Colors::RESET << "shell returned: " << out << "\n";
 
             if (!std::filesystem::exists("/tmp/hyprpm/update/" + p.output)) {
-                std::cerr << "\n" << Colors::RED << "✖" << Colors::RESET << " Plugin " << p.name << " failed to build.\n";
-                failed = true;
-                break;
+                std::cerr << "\n"
+                          << Colors::RED << "✖" << Colors::RESET << " Plugin " << p.name << " failed to build.\n"
+                          << "  This likely means that the plugin is either outdated, not yet available for your version, or broken.\n  If you are on -git, update first.\n  Try "
+                             "re-running with -v to see more verbose "
+                             "output.\n";
+                p.failed = true;
+                continue;
             }
 
             progress.printMessageAbove(std::string{Colors::GREEN} + "✔" + Colors::RESET + " built " + p.name + " into " + p.output);
         }
-
-        if (failed)
-            continue;
 
         // add repo toml to DataState
         SPluginRepository newrepo = repo;

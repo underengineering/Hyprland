@@ -184,6 +184,8 @@ class CInputManager {
     // for some bugs in follow mouse 0
     bool m_bLastFocusOnLS = false;
 
+    bool m_bLastFocusOnIMEPopup = false;
+
     // for hiding cursor on touch
     bool m_bLastInputTouch = false;
 
@@ -250,8 +252,6 @@ class CInputManager {
     } m_sCursorSurfaceInfo;
 
     void restoreCursorIconToApp(); // no-op if restored
-
-    bool m_bExitTriggered = false; // for exit dispatcher
 
     friend class CKeybindManager;
     friend class CWLSurface;

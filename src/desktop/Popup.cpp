@@ -1,4 +1,5 @@
 #include "Popup.hpp"
+#include "../config/ConfigValue.hpp"
 #include "../Compositor.hpp"
 
 CPopup::CPopup(CWindow* pOwner) : m_pWindowOwner(pOwner) {
@@ -117,6 +118,9 @@ void CPopup::onMap() {
 
     unconstrain();
     sendScale();
+
+    if (m_pLayerOwner && m_pLayerOwner->layer < ZWLR_LAYER_SHELL_V1_LAYER_TOP)
+        g_pHyprOpenGL->markBlurDirtyForMonitor(g_pCompositor->getMonitorFromID(m_pLayerOwner->layer));
 }
 
 void CPopup::onUnmap() {
@@ -131,6 +135,9 @@ void CPopup::onUnmap() {
     m_pSubsurfaceHead.reset();
 
     g_pInputManager->simulateMouseMovement();
+
+    if (m_pLayerOwner && m_pLayerOwner->layer < ZWLR_LAYER_SHELL_V1_LAYER_TOP)
+        g_pHyprOpenGL->markBlurDirtyForMonitor(g_pCompositor->getMonitorFromID(m_pLayerOwner->layer));
 }
 
 void CPopup::onCommit(bool ignoreSiblings) {
@@ -138,6 +145,18 @@ void CPopup::onCommit(bool ignoreSiblings) {
         wlr_xdg_surface_schedule_configure(m_pWLR->base);
         return;
     }
+
+    if (m_pWindowOwner && (!m_pWindowOwner->m_bIsMapped || !m_pWindowOwner->m_pWorkspace->m_bVisible)) {
+        m_vLastSize = {m_pWLR->base->current.geometry.width, m_pWLR->base->current.geometry.height};
+
+        static auto PLOGDAMAGE = CConfigValue<Hyprlang::INT>("debug:log_damage");
+        if (*PLOGDAMAGE)
+            Debug::log(LOG, "Refusing to commit damage from a subsurface of {} because it's invisible.", m_pWindowOwner);
+        return;
+    }
+
+    if (!m_pWLR->base->surface->mapped)
+        return;
 
     const auto COORDS      = coordsGlobal();
     const auto COORDSLOCAL = coordsRelativeToParent();
@@ -152,12 +171,15 @@ void CPopup::onCommit(bool ignoreSiblings) {
         m_vLastPos = COORDSLOCAL;
     }
 
-    if (!ignoreSiblings)
+    if (!ignoreSiblings && m_pSubsurfaceHead)
         m_pSubsurfaceHead->recheckDamageForSubsurfaces();
 
     g_pHyprRenderer->damageSurface(m_sWLSurface.wlr(), COORDS.x, COORDS.y);
 
     m_bRequestedReposition = false;
+
+    if (m_pLayerOwner && m_pLayerOwner->layer < ZWLR_LAYER_SHELL_V1_LAYER_TOP)
+        g_pHyprOpenGL->markBlurDirtyForMonitor(g_pCompositor->getMonitorFromID(m_pLayerOwner->layer));
 }
 
 void CPopup::onReposition() {

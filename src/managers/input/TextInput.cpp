@@ -37,16 +37,8 @@ void CTextInput::initCallbacks() {
     hyprListener_textInputDestroy.initCallback(
         isV3() ? &pWlrInput->events.destroy : &pV1Input->sDestroy,
         [this](void* owner, void* data) {
-            if (!g_pInputManager->m_sIMERelay.m_pWLRIME) {
-                //  Debug::log(WARN, "Disabling TextInput on no IME!");
-                return;
-            }
-
-            if (pWlrInput && pWlrInput->current_enabled) {
-                wlr_input_method_v2_send_deactivate(g_pInputManager->m_sIMERelay.m_pWLRIME);
-
-                g_pInputManager->m_sIMERelay.commitIMEState(this);
-            }
+            if (pWlrInput && pWlrInput->current_enabled && focusedSurface())
+                g_pInputManager->m_sIMERelay.deactivateIME(this);
 
             hyprListener_textInputCommit.removeCallback();
             hyprListener_textInputDestroy.removeCallback();
@@ -71,13 +63,13 @@ void CTextInput::onEnabled(wlr_surface* surfV1) {
     // v1 only, map surface to PTI
     if (!isV3()) {
         wlr_surface* pSurface = surfV1;
-        setFocusedSurface(pSurface);
-        if (g_pCompositor->m_pLastFocus == pSurface)
-            enter(pSurface);
+        if (g_pCompositor->m_pLastFocus != pSurface || !pV1Input->active)
+            return;
+
+        enter(pSurface);
     }
 
-    wlr_input_method_v2_send_activate(g_pInputManager->m_sIMERelay.m_pWLRIME);
-    g_pInputManager->m_sIMERelay.commitIMEState(this);
+    g_pInputManager->m_sIMERelay.activateIME(this);
 }
 
 void CTextInput::onDisabled() {
@@ -86,13 +78,16 @@ void CTextInput::onDisabled() {
         return;
     }
 
-    leave();
+    if (!focusedSurface())
+        return;
+
+    if (!isV3())
+        leave();
 
     hyprListener_surfaceDestroyed.removeCallback();
     hyprListener_surfaceUnmapped.removeCallback();
 
-    wlr_input_method_v2_send_deactivate(g_pInputManager->m_sIMERelay.m_pWLRIME);
-    g_pInputManager->m_sIMERelay.commitIMEState(this);
+    g_pInputManager->m_sIMERelay.deactivateIME(this);
 }
 
 void CTextInput::onCommit() {
@@ -126,6 +121,8 @@ void CTextInput::setFocusedSurface(wlr_surface* pSurface) {
         [this](void* owner, void* data) {
             Debug::log(LOG, "Unmap TI owner1");
 
+            if (enterLocks)
+                enterLocks--;
             pFocusedSurface = nullptr;
             hyprListener_surfaceUnmapped.removeCallback();
             hyprListener_surfaceDestroyed.removeCallback();
@@ -137,6 +134,8 @@ void CTextInput::setFocusedSurface(wlr_surface* pSurface) {
         [this](void* owner, void* data) {
             Debug::log(LOG, "destroy TI owner1");
 
+            if (enterLocks)
+                enterLocks--;
             pFocusedSurface = nullptr;
             hyprListener_surfaceUnmapped.removeCallback();
             hyprListener_surfaceDestroyed.removeCallback();
@@ -161,7 +160,11 @@ void CTextInput::enter(wlr_surface* pSurface) {
     }
 
     enterLocks++;
-    RASSERT(enterLocks == 1, "TextInput had != 1 lock in enter");
+    if (enterLocks != 1) {
+        Debug::log(ERR, "BUG THIS: TextInput has != 1 locks in enter");
+        leave();
+        enterLocks = 1;
+    }
 
     if (pWlrInput)
         wlr_text_input_v3_send_enter(pWlrInput, pSurface);
@@ -178,7 +181,10 @@ void CTextInput::leave() {
         return;
 
     enterLocks--;
-    RASSERT(enterLocks == 0, "TextInput had != 0 locks in leave");
+    if (enterLocks != 0) {
+        Debug::log(ERR, "BUG THIS: TextInput has != 0 locks in leave");
+        enterLocks = 0;
+    }
 
     if (pWlrInput && pWlrInput->focused_surface)
         wlr_text_input_v3_send_leave(pWlrInput);
@@ -188,6 +194,8 @@ void CTextInput::leave() {
     }
 
     setFocusedSurface(nullptr);
+
+    g_pInputManager->m_sIMERelay.deactivateIME(this);
 }
 
 wlr_surface* CTextInput::focusedSurface() {
@@ -217,9 +225,7 @@ void CTextInput::commitStateToIME(wlr_input_method_v2* ime) {
             wlr_input_method_v2_send_content_type(ime, pV1Input->pendingContentType.hint, pV1Input->pendingContentType.purpose);
     }
 
-    for (auto& p : g_pInputManager->m_sIMERelay.m_lIMEPopups) {
-        g_pInputManager->m_sIMERelay.updateInputPopup(&p);
-    }
+    g_pInputManager->m_sIMERelay.updateAllPopups();
 
     wlr_input_method_v2_send_done(ime);
 }

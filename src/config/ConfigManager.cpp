@@ -349,6 +349,7 @@ CConfigManager::CConfigManager() {
     m_pConfig->addConfigValue("misc:background_color", Hyprlang::INT{0xff111111});
     m_pConfig->addConfigValue("misc:new_window_takes_over_fullscreen", Hyprlang::INT{0});
     m_pConfig->addConfigValue("misc:enable_hyprcursor", Hyprlang::INT{1});
+    m_pConfig->addConfigValue("misc:hide_cursor_on_key_press", Hyprlang::INT{0});
 
     m_pConfig->addConfigValue("group:insert_after_current", Hyprlang::INT{1});
     m_pConfig->addConfigValue("group:focus_removed_window", Hyprlang::INT{1});
@@ -478,6 +479,8 @@ CConfigManager::CConfigManager() {
     m_pConfig->addConfigValue("input:tablet:region_size", Hyprlang::VEC2{0, 0});
     m_pConfig->addConfigValue("input:tablet:relative_input", Hyprlang::INT{0});
     m_pConfig->addConfigValue("input:tablet:left_handed", Hyprlang::INT{0});
+    m_pConfig->addConfigValue("input:tablet:active_area_position", Hyprlang::VEC2{0, 0});
+    m_pConfig->addConfigValue("input:tablet:active_area_size", Hyprlang::VEC2{0, 0});
 
     m_pConfig->addConfigValue("binds:pass_mouse_when_bound", Hyprlang::INT{0});
     m_pConfig->addConfigValue("binds:scroll_event_delay", Hyprlang::INT{300});
@@ -487,6 +490,7 @@ CConfigManager::CConfigManager() {
     m_pConfig->addConfigValue("binds:focus_preferred_method", Hyprlang::INT{0});
     m_pConfig->addConfigValue("binds:ignore_group_lock", Hyprlang::INT{0});
     m_pConfig->addConfigValue("binds:movefocus_cycles_fullscreen", Hyprlang::INT{1});
+    m_pConfig->addConfigValue("binds:disable_keybind_grabbing", Hyprlang::INT{0});
 
     m_pConfig->addConfigValue("gestures:workspace_swipe", Hyprlang::INT{0});
     m_pConfig->addConfigValue("gestures:workspace_swipe_fingers", Hyprlang::INT{3});
@@ -554,10 +558,12 @@ CConfigManager::CConfigManager() {
     m_pConfig->addSpecialConfigValue("device", "scroll_points", {STRVAL_EMPTY});
     m_pConfig->addSpecialConfigValue("device", "transform", Hyprlang::INT{0});
     m_pConfig->addSpecialConfigValue("device", "output", {STRVAL_EMPTY});
-    m_pConfig->addSpecialConfigValue("device", "enabled", Hyprlang::INT{1});             // only for mice, touchpads, and touchdevices
-    m_pConfig->addSpecialConfigValue("device", "region_position", Hyprlang::VEC2{0, 0}); // only for tablets
-    m_pConfig->addSpecialConfigValue("device", "region_size", Hyprlang::VEC2{0, 0});     // only for tablets
-    m_pConfig->addSpecialConfigValue("device", "relative_input", Hyprlang::INT{0});      // only for tablets
+    m_pConfig->addSpecialConfigValue("device", "enabled", Hyprlang::INT{1});                  // only for mice, touchpads, and touchdevices
+    m_pConfig->addSpecialConfigValue("device", "region_position", Hyprlang::VEC2{0, 0});      // only for tablets
+    m_pConfig->addSpecialConfigValue("device", "region_size", Hyprlang::VEC2{0, 0});          // only for tablets
+    m_pConfig->addSpecialConfigValue("device", "relative_input", Hyprlang::INT{0});           // only for tablets
+    m_pConfig->addSpecialConfigValue("device", "active_area_position", Hyprlang::VEC2{0, 0}); // only for tablets
+    m_pConfig->addSpecialConfigValue("device", "active_area_size", Hyprlang::VEC2{0, 0});     // only for tablets
 
     // keywords
     m_pConfig->registerHandler(&::handleRawExec, "exec", {false});
@@ -582,10 +588,12 @@ CConfigManager::CConfigManager() {
 
     m_pConfig->commence();
 
-    Debug::log(LOG, "NOTE: further logs to stdout / logfile are disabled by default. Use debug:disable_logs and debug:enable_stdout_logs to override this.");
-
     setDefaultAnimationVars();
     resetHLConfig();
+
+    Debug::log(LOG,
+               "!!!!HEY YOU, YES YOU!!!!: further logs to stdout / logfile are disabled by default. BEFORE SENDING THIS LOG, ENABLE THEM. Use debug:disable_logs = false to do so: "
+               "https://wiki.hyprland.org/Configuring/Variables/#debug");
 
     Debug::disableLogs = reinterpret_cast<int64_t* const*>(m_pConfig->getConfigValuePtr("debug:disable_logs")->getDataStaticPtr());
     Debug::disableTime = reinterpret_cast<int64_t* const*>(m_pConfig->getConfigValuePtr("debug:disable_time")->getDataStaticPtr());
@@ -638,6 +646,10 @@ void CConfigManager::setDefaultAnimationVars() {
         INITANIMCFG("windowsOut");
         INITANIMCFG("windowsMove");
 
+        // layers
+        INITANIMCFG("layersIn");
+        INITANIMCFG("layersOut");
+
         // fade
         INITANIMCFG("fadeIn");
         INITANIMCFG("fadeOut");
@@ -661,6 +673,9 @@ void CConfigManager::setDefaultAnimationVars() {
     CREATEANIMCFG("borderangle", "global");
     CREATEANIMCFG("workspaces", "global");
 
+    CREATEANIMCFG("layersIn", "layers");
+    CREATEANIMCFG("layersOut", "layers");
+
     CREATEANIMCFG("windowsIn", "windows");
     CREATEANIMCFG("windowsOut", "windows");
     CREATEANIMCFG("windowsMove", "windows");
@@ -671,6 +686,8 @@ void CConfigManager::setDefaultAnimationVars() {
     CREATEANIMCFG("fadeShadow", "fade");
     CREATEANIMCFG("fadeDim", "fade");
     CREATEANIMCFG("fadeLayers", "fade");
+    CREATEANIMCFG("fadeLayersIn", "fadeLayers");
+    CREATEANIMCFG("fadeLayersOut", "fadeLayers");
 
     CREATEANIMCFG("specialWorkspace", "workspaces");
 }
@@ -948,11 +965,43 @@ SMonitorRule CConfigManager::getMonitorRuleFor(const CMonitor& PMONITOR) {
     return SMonitorRule{.name = "", .resolution = Vector2D(0, 0), .offset = Vector2D(-INT32_MAX, -INT32_MAX), .scale = -1}; // 0, 0 is preferred and -1, -1 is auto
 }
 
-SWorkspaceRule CConfigManager::getWorkspaceRuleFor(CWorkspace* pWorkspace) {
-    const auto IT = std::find_if(m_dWorkspaceRules.begin(), m_dWorkspaceRules.end(), [&](const auto& other) { return pWorkspace->matchesStaticSelector(other.workspaceString); });
-    if (IT == m_dWorkspaceRules.end())
-        return SWorkspaceRule{};
-    return *IT;
+SWorkspaceRule CConfigManager::getWorkspaceRuleFor(PHLWORKSPACE pWorkspace) {
+    SWorkspaceRule mergedRule{};
+    for (auto& rule : m_dWorkspaceRules) {
+        if (!pWorkspace->matchesStaticSelector(rule.workspaceString))
+            continue;
+
+        if (rule.isDefault)
+            mergedRule.isDefault = true;
+        if (rule.isPersistent)
+            mergedRule.isPersistent = true;
+        if (rule.gapsIn.has_value())
+            mergedRule.gapsIn = rule.gapsIn;
+        if (rule.gapsOut.has_value())
+            mergedRule.gapsOut = rule.gapsOut;
+        if (rule.borderSize.has_value())
+            mergedRule.borderSize = rule.borderSize;
+        if (rule.border.has_value())
+            mergedRule.border = rule.border;
+        if (rule.rounding.has_value())
+            mergedRule.rounding = rule.rounding;
+        if (rule.decorate.has_value())
+            mergedRule.decorate = rule.decorate;
+        if (rule.shadow.has_value())
+            mergedRule.shadow = rule.shadow;
+        if (rule.onCreatedEmptyRunCmd.has_value())
+            mergedRule.onCreatedEmptyRunCmd = rule.onCreatedEmptyRunCmd;
+        if (rule.defaultName.has_value())
+            mergedRule.defaultName = rule.defaultName;
+
+        if (!rule.layoutopts.empty()) {
+            for (const auto& layoutopt : rule.layoutopts) {
+                mergedRule.layoutopts[layoutopt.first] = layoutopt.second;
+            }
+        }
+    }
+
+    return mergedRule;
 }
 
 std::vector<SWindowRule> CConfigManager::getMatchingRules(CWindow* pWindow, bool dynamic, bool shadowExec) {
@@ -1046,13 +1095,13 @@ std::vector<SWindowRule> CConfigManager::getMatchingRules(CWindow* pWindow, bool
                 }
 
                 if (!rule.szOnWorkspace.empty()) {
-                    const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(pWindow->m_iWorkspaceID);
+                    const auto PWORKSPACE = pWindow->m_pWorkspace;
                     if (!PWORKSPACE || !PWORKSPACE->matchesStaticSelector(rule.szOnWorkspace))
                         continue;
                 }
 
                 if (!rule.szWorkspace.empty()) {
-                    const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(pWindow->m_iWorkspaceID);
+                    const auto PWORKSPACE = pWindow->m_pWorkspace;
 
                     if (!PWORKSPACE)
                         continue;
@@ -1277,7 +1326,7 @@ void CConfigManager::ensureVRR(CMonitor* pMonitor) {
             /* fullscreen */
             m->vrrActive = true;
 
-            const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(m->activeWorkspace);
+            const auto PWORKSPACE = m->activeWorkspace;
 
             if (!PWORKSPACE)
                 return; // ???
@@ -1900,7 +1949,8 @@ bool windowRuleValid(const std::string& RULE) {
 }
 
 bool layerRuleValid(const std::string& RULE) {
-    return RULE == "noanim" || RULE == "blur" || RULE.starts_with("ignorealpha") || RULE.starts_with("ignorezero") || RULE.starts_with("xray") || RULE.starts_with("animation");
+    return RULE == "noanim" || RULE == "blur" || RULE == "blurpopups" || RULE.starts_with("ignorealpha") || RULE.starts_with("ignorezero") || RULE.starts_with("xray") ||
+        RULE.starts_with("animation");
 }
 
 std::optional<std::string> CConfigManager::handleWindowRule(const std::string& command, const std::string& value) {
@@ -2187,8 +2237,8 @@ std::optional<std::string> CConfigManager::handleWorkspaceRules(const std::strin
     //     rules                  = value.substr(WORKSPACE_DELIM + 1);
     // }
 
-    const static std::string ruleOnCreatedEmtpy    = "on-created-empty:";
-    const static int         ruleOnCreatedEmtpyLen = ruleOnCreatedEmtpy.length();
+    const static std::string ruleOnCreatedEmpty    = "on-created-empty:";
+    const static int         ruleOnCreatedEmptyLen = ruleOnCreatedEmpty.length();
 
     auto                     assignRule = [&](std::string rule) -> std::optional<std::string> {
         size_t delim = std::string::npos;
@@ -2224,8 +2274,8 @@ std::optional<std::string> CConfigManager::handleWorkspaceRules(const std::strin
             wsRule.isPersistent = configStringToInt(rule.substr(delim + 11));
         else if ((delim = rule.find("defaultName:")) != std::string::npos)
             wsRule.defaultName = rule.substr(delim + 12);
-        else if ((delim = rule.find(ruleOnCreatedEmtpy)) != std::string::npos)
-            wsRule.onCreatedEmptyRunCmd = cleanCmdForWorkspace(name, rule.substr(delim + ruleOnCreatedEmtpyLen));
+        else if ((delim = rule.find(ruleOnCreatedEmpty)) != std::string::npos)
+            wsRule.onCreatedEmptyRunCmd = cleanCmdForWorkspace(name, rule.substr(delim + ruleOnCreatedEmptyLen));
         else if ((delim = rule.find("layoutopt:")) != std::string::npos) {
             std::string opt = rule.substr(delim + 10);
             if (!opt.contains(":")) {

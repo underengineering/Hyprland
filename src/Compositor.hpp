@@ -92,7 +92,7 @@ class CCompositor {
     std::vector<std::shared_ptr<CMonitor>>    m_vMonitors;
     std::vector<std::shared_ptr<CMonitor>>    m_vRealMonitors; // for all monitors, even those turned off
     std::vector<std::unique_ptr<CWindow>>     m_vWindows;
-    std::vector<std::unique_ptr<CWorkspace>>  m_vWorkspaces;
+    std::vector<PHLWORKSPACE>                 m_vWorkspaces;
     std::vector<CWindow*>                     m_vWindowsFadingOut;
     std::vector<SLayerSurface*>               m_vSurfacesFadingOut;
 
@@ -118,6 +118,7 @@ class CCompositor {
     bool                                      m_bUnsafeState    = false;   // unsafe state is when there is no monitors.
     bool                                      m_bNextIsUnsafe   = false;   // because wlroots
     CMonitor*                                 m_pUnsafeOutput   = nullptr; // fallback output for the unsafe state
+    bool                                      m_bExitTriggered  = false;   // For exit dispatcher
     bool                                      m_bIsShuttingDown = false;
 
     // ------------------------------------------------- //
@@ -135,7 +136,7 @@ class CCompositor {
     bool           monitorExists(CMonitor*);
     CWindow*       vectorToWindowUnified(const Vector2D&, uint8_t properties, CWindow* pIgnoreWindow = nullptr);
     wlr_surface*   vectorToLayerSurface(const Vector2D&, std::vector<std::unique_ptr<SLayerSurface>>*, Vector2D*, SLayerSurface**);
-    SIMEPopup*     vectorToIMEPopup(const Vector2D& pos, std::list<SIMEPopup>& popups);
+    wlr_surface*   vectorToLayerPopupSurface(const Vector2D&, CMonitor* monitor, Vector2D*, SLayerSurface**);
     wlr_surface*   vectorWindowToSurface(const Vector2D&, CWindow*, Vector2D& sl);
     Vector2D       vectorToSurfaceLocal(const Vector2D&, CWindow*, wlr_surface*);
     CMonitor*      getMonitorFromOutput(wlr_output*);
@@ -143,10 +144,10 @@ class CCompositor {
     CWindow*       getWindowFromSurface(wlr_surface*);
     CWindow*       getWindowFromHandle(uint32_t);
     CWindow*       getWindowFromZWLRHandle(wl_resource*);
-    bool           isWorkspaceVisible(const int&);
-    CWorkspace*    getWorkspaceByID(const int&);
-    CWorkspace*    getWorkspaceByName(const std::string&);
-    CWorkspace*    getWorkspaceByString(const std::string&);
+    bool           isWorkspaceVisible(PHLWORKSPACE);
+    PHLWORKSPACE   getWorkspaceByID(const int&);
+    PHLWORKSPACE   getWorkspaceByName(const std::string&);
+    PHLWORKSPACE   getWorkspaceByString(const std::string&);
     void           sanityCheckWorkspaces();
     void           updateWorkspaceWindowDecos(const int&);
     int            getWindowsOnWorkspace(const int& id, std::optional<bool> onlyTiled = {});
@@ -171,12 +172,12 @@ class CCompositor {
     void           updateWorkspaceWindows(const int64_t& id);
     void           updateWindowAnimatedDecorationValues(CWindow*);
     int            getNextAvailableMonitorID(std::string const& name);
-    void           moveWorkspaceToMonitor(CWorkspace*, CMonitor*, bool noWarpCursor = false);
+    void           moveWorkspaceToMonitor(PHLWORKSPACE, CMonitor*, bool noWarpCursor = false);
     void           swapActiveWorkspaces(CMonitor*, CMonitor*);
     CMonitor*      getMonitorFromString(const std::string&);
     bool           workspaceIDOutOfBounds(const int64_t&);
     void           setWindowFullscreen(CWindow*, bool, eFullscreenMode mode = FULLSCREEN_INVALID);
-    void           updateFullscreenFadeOnWorkspace(CWorkspace*);
+    void           updateFullscreenFadeOnWorkspace(PHLWORKSPACE);
     CWindow*       getX11Parent(CWindow*);
     void           scheduleFrameForMonitor(CMonitor*);
     void           addToFadingOutSafe(SLayerSurface*);
@@ -188,13 +189,13 @@ class CCompositor {
     void           closeWindow(CWindow*);
     Vector2D       parseWindowVectorArgsRelative(const std::string&, const Vector2D&);
     void           forceReportSizesToWindowsOnWorkspace(const int&);
-    CWorkspace*    createNewWorkspace(const int&, const int&, const std::string& name = ""); // will be deleted next frame if left empty and unfocused!
+    PHLWORKSPACE   createNewWorkspace(const int&, const int&, const std::string& name = ""); // will be deleted next frame if left empty and unfocused!
     void           renameWorkspace(const int&, const std::string& name = "");
     void           setActiveMonitor(CMonitor*);
     bool           isWorkspaceSpecial(const int&);
     int            getNewSpecialID();
     void           performUserChecks();
-    void           moveWindowToWorkspaceSafe(CWindow* pWindow, CWorkspace* pWorkspace);
+    void           moveWindowToWorkspaceSafe(CWindow* pWindow, PHLWORKSPACE pWorkspace);
     CWindow*       getForceFocus();
     void           notifyIdleActivity();
     void           setIdleActivityInhibit(bool inhibit);

@@ -7,38 +7,24 @@ static void onNewSubsurface(void* owner, void* data);
 
 CSubsurface::CSubsurface(CWindow* pOwner) : m_pWindowParent(pOwner) {
     initSignals();
-
-    wlr_subsurface* wlrSubsurface;
-    wl_list_for_each(wlrSubsurface, &pOwner->m_pWLSurface.wlr()->current.subsurfaces_below, current.link) {
-        ::onNewSubsurface(this, wlrSubsurface);
-    }
-    wl_list_for_each(wlrSubsurface, &pOwner->m_pWLSurface.wlr()->current.subsurfaces_above, current.link) {
-        ::onNewSubsurface(this, wlrSubsurface);
-    }
+    initExistingSubsurfaces(pOwner->m_pWLSurface.wlr());
 }
 
 CSubsurface::CSubsurface(CPopup* pOwner) : m_pPopupParent(pOwner) {
     initSignals();
-
-    wlr_subsurface* wlrSubsurface;
-    wl_list_for_each(wlrSubsurface, &pOwner->m_sWLSurface.wlr()->current.subsurfaces_below, current.link) {
-        ::onNewSubsurface(this, wlrSubsurface);
-    }
-    wl_list_for_each(wlrSubsurface, &pOwner->m_sWLSurface.wlr()->current.subsurfaces_above, current.link) {
-        ::onNewSubsurface(this, wlrSubsurface);
-    }
+    initExistingSubsurfaces(pOwner->m_sWLSurface.wlr());
 }
 
 CSubsurface::CSubsurface(wlr_subsurface* pSubsurface, CWindow* pOwner) : m_pSubsurface(pSubsurface), m_pWindowParent(pOwner) {
     m_sWLSurface.assign(pSubsurface->surface, this);
     initSignals();
-    initExistingSubsurfaces();
+    initExistingSubsurfaces(pSubsurface->surface);
 }
 
 CSubsurface::CSubsurface(wlr_subsurface* pSubsurface, CPopup* pOwner) : m_pSubsurface(pSubsurface), m_pPopupParent(pOwner) {
     m_sWLSurface.assign(pSubsurface->surface, this);
     initSignals();
-    initExistingSubsurfaces();
+    initExistingSubsurfaces(pSubsurface->surface);
 }
 
 CSubsurface::~CSubsurface() {
@@ -46,6 +32,8 @@ CSubsurface::~CSubsurface() {
 
     if (!m_pSubsurface)
         return;
+
+    m_pSubsurface->data = nullptr;
 
     hyprListener_commitSubsurface.removeCallback();
     hyprListener_destroySubsurface.removeCallback();
@@ -78,6 +66,7 @@ static void onUnmapSubsurface(void* owner, void* data) {
 
 void CSubsurface::initSignals() {
     if (m_pSubsurface) {
+        m_pSubsurface->data = this;
         hyprListener_commitSubsurface.initCallback(&m_pSubsurface->surface->events.commit, &onCommitSubsurface, this, "CSubsurface");
         hyprListener_destroySubsurface.initCallback(&m_pSubsurface->events.destroy, &onDestroySubsurface, this, "CSubsurface");
         hyprListener_newSubsurface.initCallback(&m_pSubsurface->surface->events.new_subsurface, &::onNewSubsurface, this, "CSubsurface");
@@ -117,7 +106,7 @@ void CSubsurface::recheckDamageForSubsurfaces() {
 
 void CSubsurface::onCommit() {
     // no damaging if it's not visible
-    if (m_pWindowParent && !g_pHyprRenderer->shouldRenderWindow(m_pWindowParent)) {
+    if (m_pWindowParent && (!m_pWindowParent->m_bIsMapped || !m_pWindowParent->m_pWorkspace->m_bVisible)) {
         m_vLastSize = Vector2D{m_sWLSurface.wlr()->current.width, m_sWLSurface.wlr()->current.height};
 
         static auto PLOGDAMAGE = CConfigValue<Hyprlang::INT>("debug:log_damage");
@@ -225,15 +214,12 @@ Vector2D CSubsurface::coordsGlobal() {
     return coords;
 }
 
-void CSubsurface::initExistingSubsurfaces() {
-    if (m_pWindowParent)
-        return;
-
+void CSubsurface::initExistingSubsurfaces(wlr_surface* pSurface) {
     wlr_subsurface* wlrSubsurface;
-    wl_list_for_each(wlrSubsurface, &m_sWLSurface.wlr()->current.subsurfaces_below, current.link) {
+    wl_list_for_each(wlrSubsurface, &pSurface->current.subsurfaces_below, current.link) {
         ::onNewSubsurface(this, wlrSubsurface);
     }
-    wl_list_for_each(wlrSubsurface, &m_sWLSurface.wlr()->current.subsurfaces_above, current.link) {
+    wl_list_for_each(wlrSubsurface, &pSurface->current.subsurfaces_above, current.link) {
         ::onNewSubsurface(this, wlrSubsurface);
     }
 }

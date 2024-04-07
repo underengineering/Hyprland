@@ -4,16 +4,17 @@
 #include "../render/decorations/CHyprGroupBarDecoration.hpp"
 #include "../render/decorations/CHyprBorderDecoration.hpp"
 #include "../config/ConfigValue.hpp"
+#include <any>
 
 CWindow::CWindow() {
-    m_vRealPosition.create(g_pConfigManager->getAnimationPropertyConfig("windowsIn"), (void*)this, AVARDAMAGE_ENTIRE);
-    m_vRealSize.create(g_pConfigManager->getAnimationPropertyConfig("windowsIn"), (void*)this, AVARDAMAGE_ENTIRE);
-    m_fBorderFadeAnimationProgress.create(g_pConfigManager->getAnimationPropertyConfig("border"), (void*)this, AVARDAMAGE_BORDER);
-    m_fBorderAngleAnimationProgress.create(g_pConfigManager->getAnimationPropertyConfig("borderangle"), (void*)this, AVARDAMAGE_BORDER);
-    m_fAlpha.create(g_pConfigManager->getAnimationPropertyConfig("fadeIn"), (void*)this, AVARDAMAGE_ENTIRE);
-    m_fActiveInactiveAlpha.create(g_pConfigManager->getAnimationPropertyConfig("fadeSwitch"), (void*)this, AVARDAMAGE_ENTIRE);
-    m_cRealShadowColor.create(g_pConfigManager->getAnimationPropertyConfig("fadeShadow"), (void*)this, AVARDAMAGE_SHADOW);
-    m_fDimPercent.create(g_pConfigManager->getAnimationPropertyConfig("fadeDim"), (void*)this, AVARDAMAGE_ENTIRE);
+    m_vRealPosition.create(g_pConfigManager->getAnimationPropertyConfig("windowsIn"), this, AVARDAMAGE_ENTIRE);
+    m_vRealSize.create(g_pConfigManager->getAnimationPropertyConfig("windowsIn"), this, AVARDAMAGE_ENTIRE);
+    m_fBorderFadeAnimationProgress.create(g_pConfigManager->getAnimationPropertyConfig("border"), this, AVARDAMAGE_BORDER);
+    m_fBorderAngleAnimationProgress.create(g_pConfigManager->getAnimationPropertyConfig("borderangle"), this, AVARDAMAGE_BORDER);
+    m_fAlpha.create(g_pConfigManager->getAnimationPropertyConfig("fadeIn"), this, AVARDAMAGE_ENTIRE);
+    m_fActiveInactiveAlpha.create(g_pConfigManager->getAnimationPropertyConfig("fadeSwitch"), this, AVARDAMAGE_ENTIRE);
+    m_cRealShadowColor.create(g_pConfigManager->getAnimationPropertyConfig("fadeShadow"), this, AVARDAMAGE_SHADOW);
+    m_fDimPercent.create(g_pConfigManager->getAnimationPropertyConfig("fadeDim"), this, AVARDAMAGE_ENTIRE);
 
     addWindowDeco(std::make_unique<CHyprDropShadowDecoration>(this));
     addWindowDeco(std::make_unique<CHyprBorderDecoration>(this));
@@ -377,43 +378,37 @@ void CWindow::updateSurfaceScaleTransformDetails() {
         this);
 }
 
-void CWindow::moveToWorkspace(int workspaceID) {
-    if (m_iWorkspaceID == workspaceID)
+void CWindow::moveToWorkspace(PHLWORKSPACE pWorkspace) {
+    if (m_pWorkspace == pWorkspace)
         return;
 
     static auto PCLOSEONLASTSPECIAL = CConfigValue<Hyprlang::INT>("misc:close_special_on_empty");
 
-    const int   OLDWORKSPACE = m_iWorkspaceID;
+    const auto  OLDWORKSPACE = m_pWorkspace;
 
-    m_iWorkspaceID = workspaceID;
-
-    const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(m_iWorkspaceID);
+    m_pWorkspace = pWorkspace;
 
     setAnimationsToMove();
 
     updateSpecialRenderData();
 
-    if (PWORKSPACE) {
-        g_pEventManager->postEvent(SHyprIPCEvent{"movewindow", std::format("{:x},{}", (uintptr_t)this, PWORKSPACE->m_szName)});
-        g_pEventManager->postEvent(SHyprIPCEvent{"movewindowv2", std::format("{:x},{},{}", (uintptr_t)this, PWORKSPACE->m_iID, PWORKSPACE->m_szName)});
-        EMIT_HOOK_EVENT("moveWindow", (std::vector<void*>{this, PWORKSPACE}));
+    if (valid(pWorkspace)) {
+        g_pEventManager->postEvent(SHyprIPCEvent{"movewindow", std::format("{:x},{}", (uintptr_t)this, pWorkspace->m_szName)});
+        g_pEventManager->postEvent(SHyprIPCEvent{"movewindowv2", std::format("{:x},{},{}", (uintptr_t)this, pWorkspace->m_iID, pWorkspace->m_szName)});
+        EMIT_HOOK_EVENT("moveWindow", (std::vector<std::any>{this, pWorkspace}));
     }
 
     if (m_pSwallowed) {
-        m_pSwallowed->moveToWorkspace(workspaceID);
+        m_pSwallowed->moveToWorkspace(pWorkspace);
         m_pSwallowed->m_iMonitorID = m_iMonitorID;
     }
 
     // update xwayland coords
     g_pXWaylandManager->setWindowSize(this, m_vRealSize.value());
 
-    if (g_pCompositor->isWorkspaceSpecial(OLDWORKSPACE) && g_pCompositor->getWindowsOnWorkspace(OLDWORKSPACE) == 0 && *PCLOSEONLASTSPECIAL) {
-        const auto PWS = g_pCompositor->getWorkspaceByID(OLDWORKSPACE);
-
-        if (PWS) {
-            if (const auto PMONITOR = g_pCompositor->getMonitorFromID(PWS->m_iMonitorID); PMONITOR)
-                PMONITOR->setSpecialWorkspace(nullptr);
-        }
+    if (OLDWORKSPACE && g_pCompositor->isWorkspaceSpecial(OLDWORKSPACE->m_iID) && g_pCompositor->getWindowsOnWorkspace(OLDWORKSPACE->m_iID) == 0 && *PCLOSEONLASTSPECIAL) {
+        if (const auto PMONITOR = g_pCompositor->getMonitorFromID(OLDWORKSPACE->m_iMonitorID); PMONITOR)
+            PMONITOR->setSpecialWorkspace(nullptr);
     }
 }
 
@@ -455,6 +450,8 @@ void CWindow::onUnmap() {
     if (g_pCompositor->m_pLastWindow == this)
         g_pCompositor->m_pLastWindow = nullptr;
 
+    m_iLastWorkspace = m_pWorkspace->m_iID;
+
     m_vRealPosition.setCallbackOnEnd(unregisterVar);
     m_vRealSize.setCallbackOnEnd(unregisterVar);
     m_fBorderFadeAnimationProgress.setCallbackOnEnd(unregisterVar);
@@ -468,13 +465,11 @@ void CWindow::onUnmap() {
 
     std::erase_if(g_pCompositor->m_vWindowFocusHistory, [&](const auto& other) { return other == this; });
 
-    m_pWLSurface.unassign();
-
     hyprListener_unmapWindow.removeCallback();
 
-    if (*PCLOSEONLASTSPECIAL && g_pCompositor->getWindowsOnWorkspace(m_iWorkspaceID) == 0 && g_pCompositor->isWorkspaceSpecial(m_iWorkspaceID)) {
+    if (*PCLOSEONLASTSPECIAL && g_pCompositor->getWindowsOnWorkspace(workspaceID()) == 0 && onSpecialWorkspace()) {
         const auto PMONITOR = g_pCompositor->getMonitorFromID(m_iMonitorID);
-        if (PMONITOR && PMONITOR->specialWorkspaceID == m_iWorkspaceID)
+        if (PMONITOR && PMONITOR->activeSpecialWorkspace && PMONITOR->activeSpecialWorkspace == m_pWorkspace)
             PMONITOR->setSpecialWorkspace(nullptr);
     }
 
@@ -483,19 +478,17 @@ void CWindow::onUnmap() {
     if (PMONITOR && PMONITOR->solitaryClient == this)
         PMONITOR->solitaryClient = nullptr;
 
-    g_pCompositor->updateWorkspaceWindows(m_iWorkspaceID);
+    g_pCompositor->updateWorkspaceWindows(workspaceID());
 
     if (m_bIsX11)
         return;
 
     m_pSubsurfaceHead.reset();
     m_pPopupHead.reset();
+    m_pWorkspace.reset();
 }
 
 void CWindow::onMap() {
-
-    m_pWLSurface.assign(g_pXWaylandManager->getWindowSurface(this), this);
-
     // JIC, reset the callbacks. If any are set, we'll make sure they are cleared so we don't accidentally unset them. (In case a window got remapped)
     m_vRealPosition.resetAllCallbacks();
     m_vRealSize.resetAllCallbacks();
@@ -948,7 +941,7 @@ void CWindow::setGroupCurrent(CWindow* pWindow) {
 
     const auto PCURRENT   = getGroupCurrent();
     const bool FULLSCREEN = PCURRENT->m_bIsFullscreen;
-    const auto WORKSPACE  = g_pCompositor->getWorkspaceByID(PCURRENT->m_iWorkspaceID);
+    const auto WORKSPACE  = PCURRENT->m_pWorkspace;
 
     const auto PWINDOWSIZE = PCURRENT->m_vRealSize.goal();
     const auto PWINDOWPOS  = PCURRENT->m_vRealPosition.goal();
@@ -1039,11 +1032,13 @@ void CWindow::updateGroupOutputs() {
     if (!m_sGroupData.pNextWindow)
         return;
 
-    CWindow* curr = m_sGroupData.pNextWindow;
+    CWindow*   curr = m_sGroupData.pNextWindow;
+
+    const auto WS = m_pWorkspace;
 
     while (curr != this) {
         curr->m_iMonitorID = m_iMonitorID;
-        curr->moveToWorkspace(m_iWorkspaceID);
+        curr->moveToWorkspace(WS);
 
         curr->m_vRealPosition = m_vRealPosition.goal();
         curr->m_vRealSize     = m_vRealSize.goal();
@@ -1063,7 +1058,7 @@ bool CWindow::opaque() {
     if (m_vRealSize.goal().floor() != m_vReportedSize)
         return false;
 
-    const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(m_iWorkspaceID);
+    const auto PWORKSPACE = m_pWorkspace;
 
     if (m_pWLSurface.small() && !m_pWLSurface.m_bFillIgnoreSmall)
         return false;
@@ -1093,7 +1088,7 @@ float CWindow::rounding() {
 }
 
 void CWindow::updateSpecialRenderData() {
-    const auto  PWORKSPACE    = g_pCompositor->getWorkspaceByID(m_iWorkspaceID);
+    const auto  PWORKSPACE    = m_pWorkspace;
     const auto  WORKSPACERULE = PWORKSPACE ? g_pConfigManager->getWorkspaceRuleFor(PWORKSPACE) : SWorkspaceRule{};
     bool        border        = true;
 
@@ -1129,7 +1124,7 @@ bool CWindow::canBeTorn() {
 }
 
 bool CWindow::shouldSendFullscreenState() {
-    const auto MODE = g_pCompositor->getWorkspaceByID(m_iWorkspaceID)->m_efFullscreenMode;
+    const auto MODE = m_pWorkspace->m_efFullscreenMode;
     return m_bDontSendFullscreen ? false : (m_bFakeFullscreenState || (m_bIsFullscreen && (MODE == FULLSCREEN_FULL)));
 }
 
@@ -1155,4 +1150,60 @@ void CWindow::setAnimationsToMove() {
     m_vRealPosition.setConfig(PANIMCFG);
     m_vRealSize.setConfig(PANIMCFG);
     m_bAnimatingIn = false;
+}
+
+void CWindow::onWorkspaceAnimUpdate() {
+    // clip box for animated offsets
+    if (!m_bIsFloating || m_bPinned || m_bIsFullscreen) {
+        m_vFloatingOffset = Vector2D(0, 0);
+        return;
+    }
+
+    Vector2D   offset;
+    const auto PWORKSPACE = m_pWorkspace;
+    if (!PWORKSPACE)
+        return;
+
+    const auto PWSMON = g_pCompositor->getMonitorFromID(PWORKSPACE->m_iMonitorID);
+    if (!PWSMON)
+        return;
+
+    const auto WINBB = getFullWindowBoundingBox();
+    if (PWORKSPACE->m_vRenderOffset.value().x != 0) {
+        const auto PROGRESS = PWORKSPACE->m_vRenderOffset.value().x / PWSMON->vecSize.x;
+
+        if (WINBB.x < PWSMON->vecPosition.x)
+            offset.x += (PWSMON->vecPosition.x - WINBB.x) * PROGRESS;
+
+        if (WINBB.x + WINBB.width > PWSMON->vecPosition.x + PWSMON->vecSize.x)
+            offset.x += (WINBB.x + WINBB.width - PWSMON->vecPosition.x - PWSMON->vecSize.x) * PROGRESS;
+    } else if (PWORKSPACE->m_vRenderOffset.value().y != 0) {
+        const auto PROGRESS = PWORKSPACE->m_vRenderOffset.value().y / PWSMON->vecSize.y;
+
+        if (WINBB.y < PWSMON->vecPosition.y)
+            offset.y += (PWSMON->vecPosition.y - WINBB.y) * PROGRESS;
+
+        if (WINBB.y + WINBB.height > PWSMON->vecPosition.y + PWSMON->vecSize.y)
+            offset.y += (WINBB.y + WINBB.height - PWSMON->vecPosition.y - PWSMON->vecSize.y) * PROGRESS;
+    }
+
+    m_vFloatingOffset = offset;
+}
+
+int CWindow::popupsCount() {
+    if (m_bIsX11)
+        return 1;
+
+    int no = 0;
+    wlr_xdg_surface_for_each_popup_surface(
+        m_uSurface.xdg, [](wlr_surface* s, int x, int y, void* data) { *(int*)data += 1; }, &no);
+    return no;
+}
+
+int CWindow::workspaceID() {
+    return m_pWorkspace ? m_pWorkspace->m_iID : m_iLastWorkspace;
+}
+
+bool CWindow::onSpecialWorkspace() {
+    return m_pWorkspace ? m_pWorkspace->m_bIsSpecialWorkspace : g_pCompositor->isWorkspaceSpecial(m_iLastWorkspace);
 }

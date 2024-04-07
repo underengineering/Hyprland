@@ -3,7 +3,7 @@
 #include "../config/ConfigValue.hpp"
 
 CHyprError::CHyprError() {
-    m_fFadeOpacity.create(AVARTYPE_FLOAT, g_pConfigManager->getAnimationPropertyConfig("fadeIn"), nullptr, AVARDAMAGE_NONE);
+    m_fFadeOpacity.create(AVARTYPE_FLOAT, g_pConfigManager->getAnimationPropertyConfig("fadeIn"), AVARDAMAGE_NONE);
     m_fFadeOpacity.registerVar();
 
     g_pHookSystem->hookDynamic("focusedMon", [&](void* self, SCallbackInfo& info, std::any param) {
@@ -58,7 +58,7 @@ void CHyprError::createQueued() {
     cairo_paint(CAIRO);
     cairo_restore(CAIRO);
 
-    const auto   LINECOUNT = 1 + std::count(m_szQueued.begin(), m_szQueued.end(), '\n');
+    const auto   LINECOUNT = Hyprlang::INT{1} + std::count(m_szQueued.begin(), m_szQueued.end(), '\n');
     static auto  LINELIMIT = CConfigValue<Hyprlang::INT>("debug:error_limit");
 
     const auto   VISLINECOUNT = std::min(LINECOUNT, *LINELIMIT);
