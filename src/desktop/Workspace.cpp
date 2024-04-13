@@ -57,11 +57,15 @@ CWorkspace::~CWorkspace() {
 
     Debug::log(LOG, "Destroying workspace ID {}", m_iID);
 
-    g_pHookSystem->unhook(m_pFocusedWindowHook);
+    // check if g_pHookSystem and g_pEventManager exist, they might be destroyed as in when the compositor is closing.
+    if (g_pHookSystem)
+        g_pHookSystem->unhook(m_pFocusedWindowHook);
 
-    g_pEventManager->postEvent({"destroyworkspace", m_szName});
-    g_pEventManager->postEvent({"destroyworkspacev2", std::format("{},{}", m_iID, m_szName)});
-    EMIT_HOOK_EVENT("destroyWorkspace", this);
+    if (g_pEventManager) {
+        g_pEventManager->postEvent({"destroyworkspace", m_szName});
+        g_pEventManager->postEvent({"destroyworkspacev2", std::format("{},{}", m_iID, m_szName)});
+        EMIT_HOOK_EVENT("destroyWorkspace", this);
+    }
 }
 
 void CWorkspace::startAnim(bool in, bool left, bool instant) {
@@ -245,7 +249,8 @@ bool CWorkspace::matchesStaticSelector(const std::string& selector_) {
             // s - special: s[true]
             // n - named: n[true] or n[s:string] or n[e:string]
             // m - monitor: m[monitor_selector]
-            // w - windowCount: w[0-4] or w[1], optional flag t or f for tiled or floating, e.g. w[t0-1]
+            // w - windowCount: w[1-4] or w[1], optional flag t or f for tiled or floating and
+            //                  flag g to count groups instead of windows, e.g. w[t1-2], w[fg4]
 
             const auto  NEXTSPACE = selector.find_first_of(' ', i);
             std::string prop      = selector.substr(i, NEXTSPACE == std::string::npos ? std::string::npos : NEXTSPACE - i);
@@ -329,10 +334,10 @@ bool CWorkspace::matchesStaticSelector(const std::string& selector_) {
 
                 prop = prop.substr(2, prop.length() - 3);
 
-                if (prop.starts_with("s:"))
-                    return m_szName.starts_with(prop.substr(2));
-                if (prop.starts_with("e:"))
-                    return m_szName.ends_with(prop.substr(2));
+                if (prop.starts_with("s:") && !m_szName.starts_with(prop.substr(2)))
+                    return false;
+                if (prop.starts_with("e:") && !m_szName.ends_with(prop.substr(2)))
+                    return false;
 
                 const auto WANTSNAMED = configStringToInt(prop);
 
@@ -350,15 +355,25 @@ bool CWorkspace::matchesStaticSelector(const std::string& selector_) {
 
                 prop = prop.substr(2, prop.length() - 3);
 
-                int wantsOnlyTiled = -1;
+                int  wantsOnlyTiled  = -1;
+                bool wantsCountGroup = false;
 
-                if (prop.starts_with("t")) {
-                    wantsOnlyTiled = 1;
-                    prop           = prop.substr(1);
-                } else if (prop.starts_with("f")) {
-                    wantsOnlyTiled = 0;
-                    prop           = prop.substr(1);
+                int  flagCount = 0;
+                for (auto& flag : prop) {
+                    if (flag == 't' && wantsOnlyTiled == -1) {
+                        wantsOnlyTiled = 1;
+                        flagCount++;
+                    } else if (flag == 'f' && wantsOnlyTiled == -1) {
+                        wantsOnlyTiled = 0;
+                        flagCount++;
+                    } else if (flag == 'g' && !wantsCountGroup) {
+                        wantsCountGroup = true;
+                        flagCount++;
+                    } else {
+                        break;
+                    }
                 }
+                prop = prop.substr(flagCount);
 
                 if (!prop.contains("-")) {
                     // try single
@@ -375,7 +390,15 @@ bool CWorkspace::matchesStaticSelector(const std::string& selector_) {
                         return false;
                     }
 
-                    return g_pCompositor->getWindowsOnWorkspace(m_iID, wantsOnlyTiled == -1 ? std::nullopt : std::optional<bool>((bool)wantsOnlyTiled)) == from;
+                    int count;
+                    if (wantsCountGroup)
+                        count = g_pCompositor->getGroupsOnWorkspace(m_iID, wantsOnlyTiled == -1 ? std::nullopt : std::optional<bool>((bool)wantsOnlyTiled));
+                    else
+                        count = g_pCompositor->getWindowsOnWorkspace(m_iID, wantsOnlyTiled == -1 ? std::nullopt : std::optional<bool>((bool)wantsOnlyTiled));
+
+                    if (count != from)
+                        return false;
+                    continue;
                 }
 
                 const auto DASHPOS = prop.find("-");
@@ -399,8 +422,13 @@ bool CWorkspace::matchesStaticSelector(const std::string& selector_) {
                     return false;
                 }
 
-                const auto WINDOWSONWORKSPACE = g_pCompositor->getWindowsOnWorkspace(m_iID, wantsOnlyTiled == -1 ? std::nullopt : std::optional<bool>((bool)wantsOnlyTiled));
-                if (std::clamp(WINDOWSONWORKSPACE, from, to) != WINDOWSONWORKSPACE)
+                int count;
+                if (wantsCountGroup)
+                    count = g_pCompositor->getGroupsOnWorkspace(m_iID, wantsOnlyTiled == -1 ? std::nullopt : std::optional<bool>((bool)wantsOnlyTiled));
+                else
+                    count = g_pCompositor->getWindowsOnWorkspace(m_iID, wantsOnlyTiled == -1 ? std::nullopt : std::optional<bool>((bool)wantsOnlyTiled));
+
+                if (std::clamp(count, from, to) != count)
                     return false;
                 continue;
             }

@@ -150,7 +150,9 @@ class CCompositor {
     PHLWORKSPACE   getWorkspaceByString(const std::string&);
     void           sanityCheckWorkspaces();
     void           updateWorkspaceWindowDecos(const int&);
+    void           updateWorkspaceSpecialRenderData(const int&);
     int            getWindowsOnWorkspace(const int& id, std::optional<bool> onlyTiled = {});
+    int            getGroupsOnWorkspace(const int& id, std::optional<bool> onlyTiled = {});
     CWindow*       getUrgentWindow();
     bool           hasUrgentWindowOnWorkspace(const int&);
     CWindow*       getFirstWindowOnWorkspace(const int&);

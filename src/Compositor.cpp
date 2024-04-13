@@ -419,12 +419,10 @@ void CCompositor::cleanup() {
         g_pXWaylandManager->m_sWLRXWayland = nullptr;
     }
 
+    wl_display_destroy_clients(g_pCompositor->m_sWLDisplay);
     removeAllSignals();
 
     g_pInputManager.reset();
-
-    wl_display_destroy_clients(g_pCompositor->m_sWLDisplay);
-
     g_pDecorationPositioner.reset();
     g_pCursorManager.reset();
     g_pPluginSystem.reset();
@@ -1282,6 +1280,16 @@ int CCompositor::getWindowsOnWorkspace(const int& id, std::optional<bool> onlyTi
     return no;
 }
 
+int CCompositor::getGroupsOnWorkspace(const int& id, std::optional<bool> onlyTiled) {
+    int no = 0;
+    for (auto& w : m_vWindows) {
+        if (w->workspaceID() == id && w->m_bIsMapped && !(onlyTiled.has_value() && !w->m_bIsFloating != onlyTiled.value()) && w->m_sGroupData.head)
+            no++;
+    }
+
+    return no;
+}
+
 CWindow* CCompositor::getUrgentWindow() {
     for (auto& w : m_vWindows) {
         if (w->m_bIsMapped && w->m_bIsUrgent)
@@ -1922,7 +1930,10 @@ void CCompositor::updateWindowAnimatedDecorationValues(CWindow* pWindow) {
     // opacity
     const auto PWORKSPACE = pWindow->m_pWorkspace;
     if (pWindow->m_bIsFullscreen && PWORKSPACE->m_efFullscreenMode == FULLSCREEN_FULL) {
-        pWindow->m_fActiveInactiveAlpha = *PFULLSCREENALPHA;
+        pWindow->m_fActiveInactiveAlpha = pWindow->m_sSpecialRenderData.alphaFullscreen.toUnderlying() != -1 ?
+            (pWindow->m_sSpecialRenderData.alphaFullscreenOverride.toUnderlying() ? pWindow->m_sSpecialRenderData.alphaFullscreen.toUnderlying() :
+                                                                                    pWindow->m_sSpecialRenderData.alphaFullscreen.toUnderlying() * *PFULLSCREENALPHA) :
+            *PFULLSCREENALPHA;
     } else {
         if (pWindow == m_pLastWindow)
             pWindow->m_fActiveInactiveAlpha = pWindow->m_sSpecialRenderData.alphaOverride.toUnderlying() ? pWindow->m_sSpecialRenderData.alpha.toUnderlying() :
@@ -2361,6 +2372,18 @@ void CCompositor::updateWorkspaceWindowDecos(const int& id) {
             continue;
 
         w->updateWindowDecos();
+    }
+}
+
+void CCompositor::updateWorkspaceSpecialRenderData(const int& id) {
+    const auto PWORKSPACE    = getWorkspaceByID(id);
+    const auto WORKSPACERULE = PWORKSPACE ? g_pConfigManager->getWorkspaceRuleFor(PWORKSPACE) : SWorkspaceRule{};
+
+    for (auto& w : m_vWindows) {
+        if (w->workspaceID() != id)
+            continue;
+
+        w->updateSpecialRenderData(WORKSPACERULE);
     }
 }
 

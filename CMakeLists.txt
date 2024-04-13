@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.19)
+cmake_minimum_required(VERSION 3.27)
 include(CheckIncludeFile)
 
 # Get version
@@ -54,22 +54,21 @@ else()
 endif()
 
 ExternalProject_Add(
-    wlroots
-    PREFIX ${CMAKE_SOURCE_DIR}/subprojects/wlroots
-    SOURCE_DIR ${CMAKE_SOURCE_DIR}/subprojects/wlroots
-    PATCH_COMMAND sed -E -i -e "s/(soversion = .*$)/soversion = 13032/g" meson.build
-    CONFIGURE_COMMAND meson setup --reconfigure build --buildtype=${BUILDTYPE_LOWER} -Dwerror=false -Dxwayland=$<IF:$<BOOL:${NO_XWAYLAND}>,disabled,enabled> -Dexamples=false -Drenderers=gles2 $<IF:$<BOOL:${WITH_ASAN}>,-Db_sanitize=address,-Db_sanitize=none>
+    wlroots-hyprland
+    PREFIX ${CMAKE_SOURCE_DIR}/subprojects/wlroots-hyprland
+    SOURCE_DIR ${CMAKE_SOURCE_DIR}/subprojects/wlroots-hyprland
+    CONFIGURE_COMMAND meson setup --reconfigure build --buildtype=${BUILDTYPE_LOWER} -Dwerror=false -Dxwayland=$<IF:$<BOOL:${NO_XWAYLAND}>,disabled,enabled> -Dexamples=false -Drenderers=gles2 -Dbackends=drm,libinput $<IF:$<BOOL:${WITH_ASAN}>,-Db_sanitize=address,-Db_sanitize=none>
     BUILD_COMMAND ninja -C build
     BUILD_ALWAYS true
     BUILD_IN_SOURCE true
-    BUILD_BYPRODUCTS ${CMAKE_SOURCE_DIR}/subprojects/wlroots/build/libwlroots.so.13032
-    INSTALL_COMMAND echo "wlroots: install not needed"
+    BUILD_BYPRODUCTS ${CMAKE_SOURCE_DIR}/subprojects/wlroots-hyprland/build/libwlroots.a
+    INSTALL_COMMAND echo "wlroots-hyprland: install not needed"
 )
 
 find_program(WaylandScanner NAMES wayland-scanner)
 message(STATUS "Found WaylandScanner at ${WaylandScanner}")
 execute_process(
-    COMMAND pkg-config --variable=pkgdatadir wayland-protocols
+    COMMAND pkgconf --variable=pkgdatadir wayland-protocols
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     OUTPUT_VARIABLE WAYLAND_PROTOCOLS_DIR
     OUTPUT_STRIP_TRAILING_WHITESPACE)
@@ -86,8 +85,8 @@ endif()
 include_directories(
   .
   "src/"
-  "subprojects/wlroots/include/"
-  "subprojects/wlroots/build/include/"
+  "subprojects/wlroots-hyprland/include/"
+  "subprojects/wlroots-hyprland/build/include/"
   "subprojects/udis86/"
   "protocols/")
 set(CMAKE_CXX_STANDARD 23)
@@ -100,8 +99,21 @@ message(STATUS "Checking deps...")
 
 find_package(Threads REQUIRED)
 find_package(PkgConfig REQUIRED)
-find_package(OpenGL REQUIRED)
-pkg_check_modules(deps REQUIRED IMPORTED_TARGET wayland-server wayland-client wayland-cursor wayland-protocols cairo libdrm xkbcommon libinput pango pangocairo pixman-1 hyprlang>=0.3.2 hyprcursor) # we do not check for wlroots, as we provide it ourselves
+
+if(LEGACY_RENDERER)
+    set(GLES_VERSION "GLES2")
+else()
+    set(GLES_VERSION "GLES3")
+endif()
+find_package(OpenGL REQUIRED COMPONENTS ${GLES_VERSION})
+
+pkg_check_modules(deps REQUIRED IMPORTED_TARGET
+    xkbcommon
+    wayland-server wayland-client wayland-cursor wayland-protocols
+    cairo pango pangocairo pixman-1
+    libdrm libinput hwdata libseat libdisplay-info libliftoff libudev gbm
+    hyprlang>=0.3.2 hyprcursor
+)
 
 file(GLOB_RECURSE SRCFILES CONFIGURE_DEPENDS "src/*.cpp")
 
@@ -112,7 +124,7 @@ if(USE_TRACY)
 endif()
 
 add_executable(Hyprland ${SRCFILES} ${TRACY_CPP_FILES})
-add_dependencies(Hyprland wlroots)
+add_dependencies(Hyprland wlroots-hyprland)
 
 if(CMAKE_BUILD_TYPE MATCHES Debug OR CMAKE_BUILD_TYPE MATCHES DEBUG)
     message(STATUS "Setting debug flags")
@@ -165,8 +177,8 @@ if(NO_XWAYLAND)
     add_compile_definitions(NO_XWAYLAND)
 else()
     message(STATUS "XWAYLAND Enabled (NO_XWAYLAND not defined) checking deps...")
-    pkg_check_modules(xcbdep REQUIRED IMPORTED_TARGET xcb)
-    target_link_libraries(Hyprland PkgConfig::xcbdep)
+    pkg_check_modules(xdeps REQUIRED IMPORTED_TARGET xcb xwayland xcb-util xcb-render xcb-image xcb-xfixes xcb-errors xcb-icccm xcb-composite xcb-res xcb-ewmh)
+    target_link_libraries(Hyprland PkgConfig::xdeps)
 endif()
 
 if(NO_SYSTEMD)
@@ -221,7 +233,7 @@ function(protocol protoPath protoName external)
 endfunction()
 
 target_link_libraries(Hyprland
-        ${CMAKE_SOURCE_DIR}/subprojects/wlroots/build/libwlroots.so.13032 # wlroots is provided by us
+        ${CMAKE_SOURCE_DIR}/subprojects/wlroots-hyprland/build/libwlroots.a
         OpenGL::EGL
         OpenGL::GL
         Threads::Threads

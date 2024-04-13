@@ -63,6 +63,7 @@ struct SLayerSurface {
     int                        xray             = -1;
     bool                       ignoreAlpha      = false;
     float                      ignoreAlphaValue = 0.f;
+    bool                       dimAround        = false;
 
     std::optional<std::string> animationStyle;
 
@@ -269,8 +270,9 @@ struct STabletPad {
 };
 
 struct SIdleInhibitor {
-    wlr_idle_inhibitor_v1* pWlrInhibitor = nullptr;
-    CWindow*               pWindow       = nullptr;
+    wlr_idle_inhibitor_v1* pWlrInhibitor   = nullptr;
+    CWindow*               pWindow         = nullptr;
+    HOOK_CALLBACK_FN*      onWindowDestroy = nullptr;
 
     DYNLISTENER(Destroy);
 

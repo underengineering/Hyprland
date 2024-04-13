@@ -15,6 +15,7 @@
 #include <string>
 #include <typeindex>
 
+#include "../config/ConfigDataValues.hpp"
 #include "../config/ConfigValue.hpp"
 #include "../managers/CursorManager.hpp"
 #include "../hyprerror/HyprError.hpp"
@@ -102,6 +103,7 @@ std::string monitorsRequest(eHyprCtlOutputFormat format, std::string request) {
     "dpmsStatus": {},
     "vrr": {},
     "activelyTearing": {},
+    "disabled": {},
     "currentFormat": "{}",
     "availableModes": [{}]
 }},)#",
@@ -111,7 +113,7 @@ std::string monitorsRequest(eHyprCtlOutputFormat format, std::string request) {
                 escapeJSONStrings(m->activeSpecialWorkspace ? m->activeSpecialWorkspace->m_szName : ""), (int)m->vecReservedTopLeft.x, (int)m->vecReservedTopLeft.y,
                 (int)m->vecReservedBottomRight.x, (int)m->vecReservedBottomRight.y, m->scale, (int)m->transform, (m.get() == g_pCompositor->m_pLastMonitor ? "true" : "false"),
                 (m->dpmsStatus ? "true" : "false"), (m->output->adaptive_sync_status == WLR_OUTPUT_ADAPTIVE_SYNC_ENABLED ? "true" : "false"),
-                m->tearingState.activelyTearing ? "true" : "false", formatToString(m->drmFormat), availableModesForOutput(m.get(), format));
+                (m->tearingState.activelyTearing ? "true" : "false"), (m->m_bEnabled ? "false" : "true"), formatToString(m->drmFormat), availableModesForOutput(m.get(), format));
         }
 
         trimTrailingComma(result);
@@ -126,13 +128,13 @@ std::string monitorsRequest(eHyprCtlOutputFormat format, std::string request) {
                 "Monitor {} (ID {}):\n\t{}x{}@{:.5f} at {}x{}\n\tdescription: {}\n\tmake: {}\n\tmodel: {}\n\tserial: {}\n\tactive workspace: {} ({})\n\tspecial "
                 "workspace: {} ({})\n\treserved: {} "
                 "{} {} {}\n\tscale: {:.2f}\n\ttransform: "
-                "{}\n\tfocused: {}\n\tdpmsStatus: {}\n\tvrr: {}\n\tactivelyTearing: {}\n\tcurrentFormat: {}\n\tavailableModes: {}\n\n",
+                "{}\n\tfocused: {}\n\tdpmsStatus: {}\n\tvrr: {}\n\tactivelyTearing: {}\n\tdisabled: {}\n\tcurrentFormat: {}\n\tavailableModes: {}\n\n",
                 m->szName, m->ID, (int)m->vecPixelSize.x, (int)m->vecPixelSize.y, m->refreshRate, (int)m->vecPosition.x, (int)m->vecPosition.y, m->szShortDescription,
                 (m->output->make ? m->output->make : ""), (m->output->model ? m->output->model : ""), (m->output->serial ? m->output->serial : ""), m->activeWorkspaceID(),
                 (!m->activeWorkspace ? "" : m->activeWorkspace->m_szName), m->activeSpecialWorkspaceID(), (m->activeSpecialWorkspace ? m->activeSpecialWorkspace->m_szName : ""),
                 (int)m->vecReservedTopLeft.x, (int)m->vecReservedTopLeft.y, (int)m->vecReservedBottomRight.x, (int)m->vecReservedBottomRight.y, m->scale, (int)m->transform,
                 (m.get() == g_pCompositor->m_pLastMonitor ? "yes" : "no"), (int)m->dpmsStatus, (int)(m->output->adaptive_sync_status == WLR_OUTPUT_ADAPTIVE_SYNC_ENABLED),
-                m->tearingState.activelyTearing, formatToString(m->drmFormat), availableModesForOutput(m.get(), format));
+                m->tearingState.activelyTearing, !m->m_bEnabled, formatToString(m->drmFormat), availableModesForOutput(m.get(), format));
         }
     }
 
@@ -1209,10 +1211,27 @@ std::string dispatchSetProp(eHyprCtlOutputFormat format, std::string request) {
             PWINDOW->m_sSpecialRenderData.alphaInactiveOverride.forceSetIgnoreLocked(configStringToInt(VAL), lock);
         } else if (PROP == "alphainactive") {
             PWINDOW->m_sSpecialRenderData.alphaInactive.forceSetIgnoreLocked(std::stof(VAL), lock);
-        } else if (PROP == "activebordercolor") {
-            PWINDOW->m_sSpecialRenderData.activeBorderColor.forceSetIgnoreLocked(CGradientValueData(CColor(configStringToInt(VAL))), lock);
-        } else if (PROP == "inactivebordercolor") {
-            PWINDOW->m_sSpecialRenderData.inactiveBorderColor.forceSetIgnoreLocked(CGradientValueData(CColor(configStringToInt(VAL))), lock);
+        } else if (PROP == "alphafullscreenoverride") {
+            PWINDOW->m_sSpecialRenderData.alphaFullscreenOverride.forceSetIgnoreLocked(configStringToInt(VAL), lock);
+        } else if (PROP == "alphafullscreen") {
+            PWINDOW->m_sSpecialRenderData.alphaFullscreen.forceSetIgnoreLocked(std::stof(VAL), lock);
+        } else if (PROP == "activebordercolor" || PROP == "inactivebordercolor") {
+            CGradientValueData colorData = {};
+            if (vars.size() > 4) {
+                for (int i = 3; i < static_cast<int>(lock ? vars.size() - 1 : vars.size()); ++i) {
+                    const auto TOKEN = vars[i];
+                    if (TOKEN.ends_with("deg"))
+                        colorData.m_fAngle = std::stoi(TOKEN.substr(0, TOKEN.size() - 3)) * (PI / 180.0);
+                    else
+                        colorData.m_vColors.push_back(configStringToInt(TOKEN));
+                }
+            } else if (VAL != "-1")
+                colorData.m_vColors.push_back(configStringToInt(VAL));
+
+            if (PROP == "activebordercolor")
+                PWINDOW->m_sSpecialRenderData.activeBorderColor.forceSetIgnoreLocked(colorData, lock);
+            else
+                PWINDOW->m_sSpecialRenderData.inactiveBorderColor.forceSetIgnoreLocked(colorData, lock);
         } else if (PROP == "forcergbx") {
             PWINDOW->m_sAdditionalConfigData.forceRGBX.forceSetIgnoreLocked(configStringToInt(VAL), lock);
         } else if (PROP == "bordersize") {

@@ -390,7 +390,11 @@ void CWindow::moveToWorkspace(PHLWORKSPACE pWorkspace) {
 
     setAnimationsToMove();
 
-    updateSpecialRenderData();
+    g_pCompositor->updateWorkspaceWindows(OLDWORKSPACE->m_iID);
+    g_pCompositor->updateWorkspaceSpecialRenderData(OLDWORKSPACE->m_iID);
+    g_pCompositor->updateWorkspaceWindows(workspaceID());
+    g_pCompositor->updateWorkspaceSpecialRenderData(workspaceID());
+    g_pCompositor->updateAllWindowsAnimatedDecorationValues();
 
     if (valid(pWorkspace)) {
         g_pEventManager->postEvent(SHyprIPCEvent{"movewindow", std::format("{:x},{}", (uintptr_t)this, pWorkspace->m_szName)});
@@ -479,13 +483,16 @@ void CWindow::onUnmap() {
         PMONITOR->solitaryClient = nullptr;
 
     g_pCompositor->updateWorkspaceWindows(workspaceID());
+    g_pCompositor->updateWorkspaceSpecialRenderData(workspaceID());
+    g_pCompositor->updateAllWindowsAnimatedDecorationValues();
+
+    m_pWorkspace.reset();
 
     if (m_bIsX11)
         return;
 
     m_pSubsurfaceHead.reset();
     m_pPopupHead.reset();
-    m_pWorkspace.reset();
 }
 
 void CWindow::onMap() {
@@ -603,24 +610,35 @@ void CWindow::applyDynamicRule(const SWindowRule& r) {
                     continue;
 
                 if (r == "override") {
-                    if (opacityIDX == 1) {
-                        m_sSpecialRenderData.alphaOverride         = true;
+                    if (opacityIDX == 1)
+                        m_sSpecialRenderData.alphaOverride = true;
+                    else if (opacityIDX == 2)
                         m_sSpecialRenderData.alphaInactiveOverride = true;
-                    } else if (opacityIDX == 2)
-                        m_sSpecialRenderData.alphaInactiveOverride = true;
+                    else if (opacityIDX == 3)
+                        m_sSpecialRenderData.alphaFullscreenOverride = true;
                 } else {
                     if (opacityIDX == 0) {
                         m_sSpecialRenderData.alpha         = std::stof(r);
-                        m_sSpecialRenderData.alphaInactive = std::stof(r);
+                        m_sSpecialRenderData.alphaOverride = false;
                     } else if (opacityIDX == 1) {
                         m_sSpecialRenderData.alphaInactive         = std::stof(r);
                         m_sSpecialRenderData.alphaInactiveOverride = false;
+                    } else if (opacityIDX == 2) {
+                        m_sSpecialRenderData.alphaFullscreen         = std::stof(r);
+                        m_sSpecialRenderData.alphaFullscreenOverride = false;
                     } else {
-                        throw std::runtime_error("more than 2 alpha values");
+                        throw std::runtime_error("more than 3 alpha values");
                     }
 
                     opacityIDX++;
                 }
+            }
+
+            if (opacityIDX == 1) {
+                m_sSpecialRenderData.alphaInactiveOverride   = m_sSpecialRenderData.alphaOverride;
+                m_sSpecialRenderData.alphaInactive           = m_sSpecialRenderData.alpha;
+                m_sSpecialRenderData.alphaFullscreenOverride = m_sSpecialRenderData.alphaOverride;
+                m_sSpecialRenderData.alphaFullscreen         = m_sSpecialRenderData.alpha;
             }
         } catch (std::exception& e) { Debug::log(ERR, "Opacity rule \"{}\" failed with: {}", r.szRule, e.what()); }
     } else if (r.szRule == "noanim") {
@@ -834,6 +852,8 @@ void CWindow::createGroup() {
         addWindowDeco(std::make_unique<CHyprGroupBarDecoration>(this));
 
         g_pLayoutManager->getCurrentLayout()->recalculateWindow(this);
+        g_pCompositor->updateWorkspaceWindows(workspaceID());
+        g_pCompositor->updateWorkspaceSpecialRenderData(workspaceID());
         g_pCompositor->updateAllWindowsAnimatedDecorationValues();
     }
 }
@@ -845,7 +865,11 @@ void CWindow::destroyGroup() {
             return;
         }
         m_sGroupData.pNextWindow = nullptr;
+        m_sGroupData.head        = false;
         updateWindowDecos();
+        g_pCompositor->updateWorkspaceWindows(workspaceID());
+        g_pCompositor->updateWorkspaceSpecialRenderData(workspaceID());
+        g_pCompositor->updateAllWindowsAnimatedDecorationValues();
         return;
     }
 
@@ -872,6 +896,10 @@ void CWindow::destroyGroup() {
         w->updateWindowDecos();
     }
     g_pKeybindManager->m_bGroupsLocked = GROUPSLOCKEDPREV;
+
+    g_pCompositor->updateWorkspaceWindows(workspaceID());
+    g_pCompositor->updateWorkspaceSpecialRenderData(workspaceID());
+    g_pCompositor->updateAllWindowsAnimatedDecorationValues();
 }
 
 CWindow* CWindow::getGroupHead() {
@@ -1088,20 +1116,23 @@ float CWindow::rounding() {
 }
 
 void CWindow::updateSpecialRenderData() {
-    const auto  PWORKSPACE    = m_pWorkspace;
-    const auto  WORKSPACERULE = PWORKSPACE ? g_pConfigManager->getWorkspaceRuleFor(PWORKSPACE) : SWorkspaceRule{};
-    bool        border        = true;
+    const auto PWORKSPACE    = m_pWorkspace;
+    const auto WORKSPACERULE = PWORKSPACE ? g_pConfigManager->getWorkspaceRuleFor(PWORKSPACE) : SWorkspaceRule{};
+    updateSpecialRenderData(WORKSPACERULE);
+}
 
+void CWindow::updateSpecialRenderData(const SWorkspaceRule& workspaceRule) {
     static auto PNOBORDERONFLOATING = CConfigValue<Hyprlang::INT>("general:no_border_on_floating");
 
+    bool        border = true;
     if (m_bIsFloating && *PNOBORDERONFLOATING == 1)
         border = false;
 
-    m_sSpecialRenderData.border     = WORKSPACERULE.border.value_or(border);
-    m_sSpecialRenderData.borderSize = WORKSPACERULE.borderSize.value_or(-1);
-    m_sSpecialRenderData.decorate   = WORKSPACERULE.decorate.value_or(true);
-    m_sSpecialRenderData.rounding   = WORKSPACERULE.rounding.value_or(true);
-    m_sSpecialRenderData.shadow     = WORKSPACERULE.shadow.value_or(true);
+    m_sSpecialRenderData.border     = workspaceRule.border.value_or(border);
+    m_sSpecialRenderData.borderSize = workspaceRule.borderSize.value_or(-1);
+    m_sSpecialRenderData.decorate   = workspaceRule.decorate.value_or(true);
+    m_sSpecialRenderData.rounding   = workspaceRule.rounding.value_or(true);
+    m_sSpecialRenderData.shadow     = workspaceRule.shadow.value_or(true);
 }
 
 int CWindow::getRealBorderSize() {

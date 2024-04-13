@@ -302,7 +302,8 @@ void CMonitor::onDisconnect(bool destroy) {
         g_pCompositor->m_pLastMonitor = nullptr;
     }
 
-    activeWorkspace->m_bVisible = false;
+    if (activeWorkspace)
+        activeWorkspace->m_bVisible = false;
     activeWorkspace.reset();
 
     if (!destroy)
@@ -569,7 +570,8 @@ void CMonitor::changeWorkspace(const PHLWORKSPACE& pWorkspace, bool internal, bo
                 w->moveToWorkspace(pWorkspace);
         }
 
-        if (!noFocus && !g_pCompositor->m_pLastMonitor->activeSpecialWorkspace) {
+        if (!noFocus && !g_pCompositor->m_pLastMonitor->activeSpecialWorkspace &&
+            !(g_pCompositor->m_pLastWindow && g_pCompositor->m_pLastWindow->m_bPinned && g_pCompositor->m_pLastWindow->m_iMonitorID == ID)) {
             static auto PFOLLOWMOUSE = CConfigValue<Hyprlang::INT>("input:follow_mouse");
             CWindow*    pWindow      = pWorkspace->getLastFocusedWindow();
 
@@ -627,10 +629,12 @@ void CMonitor::setSpecialWorkspace(const PHLWORKSPACE& pWorkspace) {
 
         g_pLayoutManager->getCurrentLayout()->recalculateMonitor(ID);
 
-        if (const auto PLAST = activeWorkspace->getLastFocusedWindow(); PLAST)
-            g_pCompositor->focusWindow(PLAST);
-        else
-            g_pInputManager->refocus();
+        if (!(g_pCompositor->m_pLastWindow && g_pCompositor->m_pLastWindow->m_bPinned && g_pCompositor->m_pLastWindow->m_iMonitorID == ID)) {
+            if (const auto PLAST = activeWorkspace->getLastFocusedWindow(); PLAST)
+                g_pCompositor->focusWindow(PLAST);
+            else
+                g_pInputManager->refocus();
+        }
 
         g_pCompositor->updateFullscreenFadeOnWorkspace(activeWorkspace);
 
@@ -693,10 +697,12 @@ void CMonitor::setSpecialWorkspace(const PHLWORKSPACE& pWorkspace) {
 
     g_pLayoutManager->getCurrentLayout()->recalculateMonitor(ID);
 
-    if (const auto PLAST = pWorkspace->getLastFocusedWindow(); PLAST)
-        g_pCompositor->focusWindow(PLAST);
-    else
-        g_pInputManager->refocus();
+    if (!(g_pCompositor->m_pLastWindow && g_pCompositor->m_pLastWindow->m_bPinned && g_pCompositor->m_pLastWindow->m_iMonitorID == ID)) {
+        if (const auto PLAST = pWorkspace->getLastFocusedWindow(); PLAST)
+            g_pCompositor->focusWindow(PLAST);
+        else
+            g_pInputManager->refocus();
+    }
 
     g_pEventManager->postEvent(SHyprIPCEvent{"activespecial", pWorkspace->m_szName + "," + szName});
 

@@ -23,7 +23,7 @@ debug:
 clear:
 	rm -rf build
 	rm -f ./protocols/*-protocol.h ./protocols/*-protocol.c
-	rm -rf ./subprojects/wlroots/build
+	rm -rf ./subprojects/wlroots-hyprland/build
 
 all:
 	@if [[ "$EUID" = 0 ]]; then echo -en "Avoid running $(MAKE) all as sudo.\n"; fi
@@ -37,15 +37,18 @@ install:
 	mkdir -p ${PREFIX}/share/wayland-sessions
 	mkdir -p ${PREFIX}/bin
 	mkdir -p ${PREFIX}/share/hyprland
-	mkdir -p ${PREFIX}/share/bash-completion
-	mkdir -p ${PREFIX}/share/fish/completions
+	mkdir -p ${PREFIX}/share/bash-completion/completions
+	mkdir -p ${PREFIX}/share/fish/vendor_completions.d
 	mkdir -p ${PREFIX}/share/zsh/site-functions
 	cp -f ./build/Hyprland ${PREFIX}/bin
 	cp -f ./build/hyprctl/hyprctl ${PREFIX}/bin
 	cp -f ./build/hyprpm/hyprpm ${PREFIX}/bin
-	cp -f ./hyprctl/hyprctl.bash ${PREFIX}/share/bash-completion/hyprctl
-	cp -f ./hyprctl/hyprctl.fish ${PREFIX}/share/fish/completions/hyprctl.fish
+	cp -f ./hyprctl/hyprctl.bash ${PREFIX}/share/bash-completion/completions/hyprctl
+	cp -f ./hyprctl/hyprctl.fish ${PREFIX}/share/fish/vendor_completions.d/hyprctl.fish
 	cp -f ./hyprctl/hyprctl.zsh ${PREFIX}/share/zsh/site-functions/_hyprctl
+	cp -f ./hyprpm/hyprpm.bash ${PREFIX}/share/bash-completion/completions/hyprpm
+	cp -f ./hyprpm/hyprpm.fish ${PREFIX}/share/fish/vendor_completions.d/hyprpm.fish
+	cp -f ./hyprpm/hyprpm.zsh ${PREFIX}/share/zsh/site-functions/_hyprpm
 	chmod 755 ${PREFIX}/bin/Hyprland
 	chmod 755 ${PREFIX}/bin/hyprctl
 	chmod 755 ${PREFIX}/bin/hyprpm
@@ -58,9 +61,6 @@ install:
 	mkdir -p ${PREFIX}/share/man/man1
 	install -m644 ./docs/*.1 ${PREFIX}/share/man/man1
 
-	mkdir -p ${PREFIX}/lib/
-	cp ./subprojects/wlroots/build/libwlroots.so.13032 ${PREFIX}/lib/
-
 	$(MAKE) installheaders
 
 uninstall:
@@ -69,10 +69,15 @@ uninstall:
 	rm -f ${PREFIX}/bin/hyprland
 	rm -f ${PREFIX}/bin/hyprctl
 	rm -f ${PREFIX}/bin/hyprpm
-	rm -f ${PREFIX}/lib/libwlroots.so.13032
 	rm -rf ${PREFIX}/share/hyprland
 	rm -f ${PREFIX}/share/man/man1/Hyprland.1
 	rm -f ${PREFIX}/share/man/man1/hyprctl.1
+	rm -f ${PREFIX}/share/bash-completion/completions/hyprctl
+	rm -f ${PREFIX}/share/fish/vendor_completions.d/hyprctl.fish
+	rm -f ${PREFIX}/share/zsh/site-functions/_hyprctl
+	rm -f ${PREFIX}/share/bash-completion/completions/hyprpm
+	rm -f ${PREFIX}/share/fish/vendor_completions.d/hyprpm.fish
+	rm -f ${PREFIX}/share/zsh/site-functions/_hyprpm
 
 pluginenv:
 	@echo -en "$(MAKE) pluginenv has been deprecated.\nPlease run $(MAKE) all && sudo $(MAKE) installheaders\n"
@@ -84,12 +89,12 @@ installheaders:
 	rm -fr ${PREFIX}/include/hyprland
 	mkdir -p ${PREFIX}/include/hyprland
 	mkdir -p ${PREFIX}/include/hyprland/protocols
-	mkdir -p ${PREFIX}/include/hyprland/wlroots
+	mkdir -p ${PREFIX}/include/hyprland/wlroots-hyprland
 	mkdir -p ${PREFIX}/share/pkgconfig
 	
 	find src -name '*.h*' -print0 | cpio --quiet -0dump ${PREFIX}/include/hyprland
-	cd subprojects/wlroots/include && find . -name '*.h*' -print0 | cpio --quiet -0dump ${PREFIX}/include/hyprland/wlroots && cd ../../..
-	cd subprojects/wlroots/build/include && find . -name '*.h*' -print0 | cpio --quiet -0dump ${PREFIX}/include/hyprland/wlroots && cd ../../../..
+	cd subprojects/wlroots-hyprland/include && find . -name '*.h*' -print0 | cpio --quiet -0dump ${PREFIX}/include/hyprland/wlroots-hyprland && cd ../../..
+	cd subprojects/wlroots-hyprland/build/include && find . -name '*.h*' -print0 | cpio --quiet -0dump ${PREFIX}/include/hyprland/wlroots-hyprland && cd ../../../..
 	cp ./protocols/*-protocol.h ${PREFIX}/include/hyprland/protocols
 	cp ./build/hyprland.pc ${PREFIX}/share/pkgconfig
 	if [ -d /usr/share/pkgconfig ]; then cp ./build/hyprland.pc /usr/share/pkgconfig 2>/dev/null || true; fi

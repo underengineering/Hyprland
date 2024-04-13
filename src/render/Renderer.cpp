@@ -660,6 +660,13 @@ void CHyprRenderer::renderWindow(CWindow* pWindow, CMonitor* pMonitor, timespec*
 }
 
 void CHyprRenderer::renderLayer(SLayerSurface* pLayer, CMonitor* pMonitor, timespec* time, bool popups) {
+    static auto PDIMAROUND = CConfigValue<Hyprlang::FLOAT>("decoration:dim_around");
+
+    if (*PDIMAROUND && pLayer->dimAround && !m_bRenderingSnapshot && !popups) {
+        CBox monbox = {0, 0, g_pHyprOpenGL->m_RenderData.pMonitor->vecTransformedSize.x, g_pHyprOpenGL->m_RenderData.pMonitor->vecTransformedSize.y};
+        g_pHyprOpenGL->renderRect(&monbox, CColor(0, 0, 0, *PDIMAROUND * pLayer->alpha.value()));
+    }
+
     if (pLayer->fadingOut) {
         if (!popups)
             g_pHyprOpenGL->renderSnapshot(&pLayer);
@@ -1709,19 +1716,13 @@ void CHyprRenderer::damageSurface(wlr_surface* pSurface, double x, double y, dou
     if (g_pCompositor->m_bUnsafeState)
         return;
 
-    auto* const PSURFACE = CWLSurface::surfaceFromWlr(pSurface);
-    if (PSURFACE && PSURFACE->small()) {
-        const auto CORRECTION = PSURFACE->correctSmallVec();
-        x += CORRECTION.x;
-        y += CORRECTION.y;
-    }
-
     const auto WLSURF    = CWLSurface::surfaceFromWlr(pSurface);
     CRegion    damageBox = WLSURF ? WLSURF->logicalDamage() : CRegion{};
     if (!WLSURF) {
         Debug::log(ERR, "BUG THIS: No CWLSurface for surface in damageSurface!!!");
         wlr_surface_get_effective_damage(pSurface, damageBox.pixman());
     }
+
     if (scale != 1.0)
         damageBox.scale(scale);
 

@@ -10,13 +10,13 @@ hyprctl [<OPTIONS>]... <ARGUMENTS>
             |   (--batch)                                             "Execute a batch of commands separated by ;"
             ;
 
-<WINDOWS> ::= {{{ hyprctl clients | grep class | awk '{print $2}' }}}
+<WINDOWS> ::= {{{ hyprctl clients | grep class | awk '{print $2}' }}};
 
-<AVAILABLE_PLUGINS> ::= {{{ hyprpm list | grep "Plugin" | awk '{print $4}' }}}
+<AVAILABLE_PLUGINS> ::= {{{ hyprpm list | grep "Plugin" | awk '{print $4}' }}};
 
-<MONITORS> ::= {{{ hyprctl monitors | grep Monitor | awk '{ print $2 }' }}}
+<MONITORS> ::= {{{ hyprctl monitors | grep Monitor | awk '{ print $2 }' }}};
 
-<KEYBOARDS> ::= {{{ hyprctl devices | sed -n '/Keyboard at/{n; s/^\s\+//; p}' }}}
+<KEYBOARDS> ::= {{{ hyprctl devices | sed -n '/Keyboard at/{n; s/^\s\+//; p}' }}};
 
 <NOTIFICATION_TYPES> ::=  (0)   "WARNING"
                       |   (1)   "INFO"
@@ -49,6 +49,8 @@ hyprctl [<OPTIONS>]... <ARGUMENTS>
          |   (alpha)
          |   (alphainactiveoverride (0 | 1))
          |   (alphainactive)
+         |   (alphafullscreenoverride (0 | 1))
+         |   (alphafullscreen)
          |   (activebordercolor)
          |   (inactivebordercolor)
          ;
@@ -75,7 +77,7 @@ hyprctl [<OPTIONS>]... <ARGUMENTS>
             |   (monitors [all])                                      "List active outputs with their properties"
             |   (notify <NOTIFICATION_TYPES> <NUM>)                   "Send a notification using the built-in Hyprland notification system"
             |   (output (create (wayland | x11 | headless | auto) | remove <MONITORS>)) "Allows adding/removing fake outputs to a specific backend"
-            |   (plugin <AVIABLE_PLUGINS>)                            "Interact with a plugin"
+            |   (plugin <AVAILABLE_PLUGINS>)                          "Interact with a plugin"
             |   (reload)                                              "Force reload the config"
             |   (rollinglog)                                          "Print tail of the log"
             |   (setcursor)                                           "Set the cursor theme and reloads the cursor manager"

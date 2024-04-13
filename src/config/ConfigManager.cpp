@@ -440,6 +440,7 @@ CConfigManager::CConfigManager() {
     m_pConfig->addConfigValue("input:follow_mouse", Hyprlang::INT{1});
     m_pConfig->addConfigValue("input:mouse_refocus", Hyprlang::INT{1});
     m_pConfig->addConfigValue("input:special_fallthrough", Hyprlang::INT{0});
+    m_pConfig->addConfigValue("input:off_window_axis_events", Hyprlang::INT{1});
     m_pConfig->addConfigValue("input:sensitivity", {0.f});
     m_pConfig->addConfigValue("input:accel_profile", {STRVAL_EMPTY});
     m_pConfig->addConfigValue("input:kb_file", {STRVAL_EMPTY});
@@ -502,7 +503,6 @@ CConfigManager::CConfigManager() {
     m_pConfig->addConfigValue("gestures:workspace_swipe_direction_lock", Hyprlang::INT{1});
     m_pConfig->addConfigValue("gestures:workspace_swipe_direction_lock_threshold", Hyprlang::INT{10});
     m_pConfig->addConfigValue("gestures:workspace_swipe_forever", Hyprlang::INT{0});
-    m_pConfig->addConfigValue("gestures:workspace_swipe_numbered", Hyprlang::INT{0});
     m_pConfig->addConfigValue("gestures:workspace_swipe_use_r", Hyprlang::INT{0});
     m_pConfig->addConfigValue("gestures:workspace_swipe_touch", Hyprlang::INT{0});
 
@@ -791,12 +791,11 @@ void CConfigManager::postConfigReload(const Hyprlang::CParseResult& result) {
         refreshGroupBarGradients();
 
     // Updates dynamic window and workspace rules
-    for (auto& w : g_pCompositor->m_vWindows) {
-        if (!w->m_bIsMapped)
+    for (auto& w : g_pCompositor->m_vWorkspaces) {
+        if (w->inert())
             continue;
-
-        w->updateDynamicRules();
-        w->updateSpecialRenderData();
+        g_pCompositor->updateWorkspaceWindows(w->m_iID);
+        g_pCompositor->updateWorkspaceSpecialRenderData(w->m_iID);
     }
 
     // Update window border colors
@@ -1949,8 +1948,8 @@ bool windowRuleValid(const std::string& RULE) {
 }
 
 bool layerRuleValid(const std::string& RULE) {
-    return RULE == "noanim" || RULE == "blur" || RULE == "blurpopups" || RULE.starts_with("ignorealpha") || RULE.starts_with("ignorezero") || RULE.starts_with("xray") ||
-        RULE.starts_with("animation");
+    return RULE == "noanim" || RULE == "blur" || RULE == "blurpopups" || RULE.starts_with("ignorealpha") || RULE.starts_with("ignorezero") || RULE == "dimaround" ||
+        RULE.starts_with("xray") || RULE.starts_with("animation");
 }
 
 std::optional<std::string> CConfigManager::handleWindowRule(const std::string& command, const std::string& value) {
@@ -2084,7 +2083,7 @@ std::optional<std::string> CConfigManager::handleWindowRuleV2(const std::string&
 
         result = removeBeginEndSpacesTabs(result);
 
-        if (result.back() == ',')
+        if (!result.empty() && result.back() == ',')
             result.pop_back();
 
         return result;
