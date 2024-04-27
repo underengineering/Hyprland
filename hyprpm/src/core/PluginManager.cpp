@@ -95,6 +95,11 @@ SHyprlandVersion CPluginManager::getHyprlandVersion() {
 bool CPluginManager::addNewPluginRepo(const std::string& url, const std::string& rev) {
     const auto HLVER = getHyprlandVersion();
 
+    if (!hasDeps()) {
+        std::cerr << "\n" << Colors::RED << "✖" << Colors::RESET << " Could not clone the plugin repository. Dependencies not satisfied. Hyprpm requires: cmake, meson, cpio\n";
+        return false;
+    }
+
     if (DataState::pluginRepoExists(url)) {
         std::cerr << "\n" << Colors::RED << "✖" << Colors::RESET << " Could not clone the plugin repository. Repository already installed.\n";
         return false;
@@ -378,6 +383,11 @@ bool CPluginManager::updateHeaders(bool force) {
 
     const auto HLVER = getHyprlandVersion();
 
+    if (!hasDeps()) {
+        std::cerr << "\n" << Colors::RED << "✖" << Colors::RESET << " Could not update. Dependencies not satisfied. Hyprpm requires: cmake, meson, cpio\n";
+        return false;
+    }
+
     if (!std::filesystem::exists("/tmp/hyprpm")) {
         std::filesystem::create_directory("/tmp/hyprpm");
         std::filesystem::permissions("/tmp/hyprpm", std::filesystem::perms::all, std::filesystem::perm_options::replace);
@@ -401,7 +411,19 @@ bool CPluginManager::updateHeaders(bool force) {
 
     progress.printMessageAbove(std::string{Colors::YELLOW} + "!" + Colors::RESET + " Cloning https://github.com/hyprwm/hyprland, this might take a moment.");
 
-    std::string ret = execAndGet("cd /tmp/hyprpm && git clone --recursive https://github.com/hyprwm/hyprland hyprland --shallow-since='" + HLVER.date + "'");
+    // let us give a bit of leg-room for shallowing
+    // due to timezones, etc.
+    const std::string SHALLOW_DATE = removeBeginEndSpacesTabs(HLVER.date).empty() ? "" : execAndGet("date --date='" + HLVER.date + " - 1 weeks' '+\%a \%b \%d \%H:\%M:\%S \%Y'");
+
+    if (m_bVerbose)
+        progress.printMessageAbove(std::string{Colors::BLUE} + "[v] " + Colors::RESET + "will shallow since: " + SHALLOW_DATE);
+
+    std::string ret = execAndGet("cd /tmp/hyprpm && git clone --recursive https://github.com/hyprwm/hyprland hyprland --shallow-since='" + SHALLOW_DATE + "'");
+
+    if (!std::filesystem::exists("/tmp/hyprpm/hyprland")) {
+        progress.printMessageAbove(std::string{Colors::RED} + "✖" + Colors::RESET + " Clone failed. Retrying without shallow.");
+        ret = execAndGet("cd /tmp/hyprpm && git clone --recursive https://github.com/hyprwm/hyprland hyprland");
+    }
 
     if (!std::filesystem::exists("/tmp/hyprpm/hyprland")) {
         std::cerr << "\n" << Colors::RED << "✖" << Colors::RESET << " Could not clone the hyprland repository. shell returned:\n" << ret << "\n";
@@ -413,11 +435,15 @@ bool CPluginManager::updateHeaders(bool force) {
     progress.m_szCurrentMessage = "Checking out sources";
     progress.print();
 
-    ret = execAndGet("cd /tmp/hyprpm/hyprland && git checkout " + HLVER.branch +
-                     " 2>&1 && git rm subprojects/tracy && git submodule update --init 2>&1 && git reset --hard --recurse-submodules " + HLVER.hash);
+    ret = execAndGet("cd /tmp/hyprpm/hyprland && git checkout " + HLVER.branch + " 2>&1");
 
     if (m_bVerbose)
-        progress.printMessageAbove(std::string{Colors::BLUE} + "[v] " + Colors::RESET + "git returned: " + ret);
+        progress.printMessageAbove(std::string{Colors::BLUE} + "[v] " + Colors::RESET + "git returned (co): " + ret);
+
+    ret = execAndGet("cd /tmp/hyprpm/hyprland && git rm subprojects/tracy && git submodule update --init 2>&1 && git reset --hard --recurse-submodules " + HLVER.hash);
+
+    if (m_bVerbose)
+        progress.printMessageAbove(std::string{Colors::BLUE} + "[v] " + Colors::RESET + "git returned (rs): " + ret);
 
     progress.printMessageAbove(std::string{Colors::GREEN} + "✔" + Colors::RESET + " checked out to running ver");
     progress.m_iSteps           = 3;
@@ -598,7 +624,7 @@ bool CPluginManager::updatePlugins(bool forceUpdateAll) {
         for (auto& p : pManifest->m_vPlugins) {
             std::string out;
 
-            if (p.since > HLVER.commits && HLVER.commits >= 1 /* for --depth 1 clones, we can't check this. */) {
+            if (p.since > HLVER.commits && HLVER.commits >= 1000 /* for shallow clones, we can't check this. 1000 is an arbitrary number I chose. */) {
                 progress.printMessageAbove(std::string{Colors::RED} + "✖" + Colors::RESET + " Not building " + p.name + ": your Hyprland version is too old.\n");
                 p.failed = true;
                 continue;
@@ -816,4 +842,14 @@ std::string CPluginManager::headerError(const eHeadersErrors err) {
     }
 
     return std::string{Colors::RED} + "✖" + Colors::RESET + " Unknown header error. Please run hyprpm update to fix those.\n";
+}
+
+bool CPluginManager::hasDeps() {
+    std::vector<std::string> deps = {"meson", "cpio", "cmake"};
+    for (auto& d : deps) {
+        if (!execAndGet("which " + d + " 2>&1").contains("/"))
+            return false;
+    }
+
+    return true;
 }

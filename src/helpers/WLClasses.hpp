@@ -108,9 +108,9 @@ struct SRenderData {
     bool squishOversized = true;
 
     // for calculating UV
-    CWindow* pWindow = nullptr;
+    PHLWINDOW pWindow;
 
-    bool     popup = false;
+    bool      popup = false;
 };
 
 struct SExtensionFindingData {
@@ -269,18 +269,6 @@ struct STabletPad {
     }
 };
 
-struct SIdleInhibitor {
-    wlr_idle_inhibitor_v1* pWlrInhibitor   = nullptr;
-    CWindow*               pWindow         = nullptr;
-    HOOK_CALLBACK_FN*      onWindowDestroy = nullptr;
-
-    DYNLISTENER(Destroy);
-
-    bool operator==(const SIdleInhibitor& b) const {
-        return pWlrInhibitor == b.pWlrInhibitor;
-    }
-};
-
 struct SSwipeGesture {
     PHLWORKSPACE pWorkspaceBegin = nullptr;
 
@@ -326,26 +314,5 @@ struct SSwitchDevice {
 
     bool operator==(const SSwitchDevice& other) const {
         return pWlrDevice == other.pWlrDevice;
-    }
-};
-
-struct STearingController {
-    wlr_tearing_control_v1* pWlrHint = nullptr;
-
-    DYNLISTENER(set);
-    DYNLISTENER(destroy);
-
-    bool operator==(const STearingController& other) const {
-        return pWlrHint == other.pWlrHint;
-    }
-};
-
-struct SShortcutInhibitor {
-    wlr_keyboard_shortcuts_inhibitor_v1* pWlrInhibitor = nullptr;
-
-    DYNLISTENER(destroy);
-
-    bool operator==(const SShortcutInhibitor& other) const {
-        return pWlrInhibitor == other.pWlrInhibitor;
     }
 };

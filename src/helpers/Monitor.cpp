@@ -1,10 +1,8 @@
 #include "Monitor.hpp"
-
 #include "MiscFunctions.hpp"
-
 #include "../Compositor.hpp"
-
 #include "../config/ConfigValue.hpp"
+#include "../protocols/GammaControl.hpp"
 
 int ratHandler(void* data) {
     g_pHyprRenderer->renderMonitor((CMonitor*)data);
@@ -26,6 +24,8 @@ CMonitor::~CMonitor() {
     hyprListener_monitorNeedsFrame.removeCallback();
     hyprListener_monitorCommit.removeCallback();
     hyprListener_monitorBind.removeCallback();
+
+    events.destroy.emit();
 }
 
 void CMonitor::onConnect(bool noRule) {
@@ -214,6 +214,10 @@ void CMonitor::onConnect(bool noRule) {
     renderTimer = wl_event_loop_add_timer(g_pCompositor->m_sWLEventLoop, ratHandler, this);
 
     g_pCompositor->scheduleFrameForMonitor(this);
+
+    PROTO::gamma->applyGammaToState(this);
+
+    events.connect.emit();
 }
 
 void CMonitor::onDisconnect(bool destroy) {
@@ -227,6 +231,8 @@ void CMonitor::onDisconnect(bool destroy) {
         return;
 
     Debug::log(LOG, "onDisconnect called for {}", output->name);
+
+    events.disconnect.emit();
 
     // Cleanup everything. Move windows back, snap cursor, shit.
     CMonitor* BACKUPMON = nullptr;
@@ -297,8 +303,8 @@ void CMonitor::onDisconnect(bool destroy) {
             w->startAnim(true, true, true);
         }
     } else {
-        g_pCompositor->m_pLastFocus   = nullptr;
-        g_pCompositor->m_pLastWindow  = nullptr;
+        g_pCompositor->m_pLastFocus = nullptr;
+        g_pCompositor->m_pLastWindow.reset();
         g_pCompositor->m_pLastMonitor = nullptr;
     }
 
@@ -545,7 +551,7 @@ void CMonitor::changeWorkspace(const PHLWORKSPACE& pWorkspace, bool internal, bo
     if (pWorkspace->m_bIsSpecialWorkspace) {
         if (activeSpecialWorkspace != pWorkspace) {
             Debug::log(LOG, "changeworkspace on special, togglespecialworkspace to id {}", pWorkspace->m_iID);
-            g_pKeybindManager->m_mDispatchers["togglespecialworkspace"](pWorkspace->m_szName == "special" ? "" : pWorkspace->m_szName);
+            setSpecialWorkspace(pWorkspace);
         }
         return;
     }
@@ -571,9 +577,9 @@ void CMonitor::changeWorkspace(const PHLWORKSPACE& pWorkspace, bool internal, bo
         }
 
         if (!noFocus && !g_pCompositor->m_pLastMonitor->activeSpecialWorkspace &&
-            !(g_pCompositor->m_pLastWindow && g_pCompositor->m_pLastWindow->m_bPinned && g_pCompositor->m_pLastWindow->m_iMonitorID == ID)) {
+            !(g_pCompositor->m_pLastWindow.lock() && g_pCompositor->m_pLastWindow.lock()->m_bPinned && g_pCompositor->m_pLastWindow.lock()->m_iMonitorID == ID)) {
             static auto PFOLLOWMOUSE = CConfigValue<Hyprlang::INT>("input:follow_mouse");
-            CWindow*    pWindow      = pWorkspace->getLastFocusedWindow();
+            auto        pWindow      = pWorkspace->getLastFocusedWindow();
 
             if (!pWindow) {
                 if (*PFOLLOWMOUSE == 1)
@@ -629,7 +635,7 @@ void CMonitor::setSpecialWorkspace(const PHLWORKSPACE& pWorkspace) {
 
         g_pLayoutManager->getCurrentLayout()->recalculateMonitor(ID);
 
-        if (!(g_pCompositor->m_pLastWindow && g_pCompositor->m_pLastWindow->m_bPinned && g_pCompositor->m_pLastWindow->m_iMonitorID == ID)) {
+        if (!(g_pCompositor->m_pLastWindow.lock() && g_pCompositor->m_pLastWindow.lock()->m_bPinned && g_pCompositor->m_pLastWindow.lock()->m_iMonitorID == ID)) {
             if (const auto PLAST = activeWorkspace->getLastFocusedWindow(); PLAST)
                 g_pCompositor->focusWindow(PLAST);
             else
@@ -697,7 +703,7 @@ void CMonitor::setSpecialWorkspace(const PHLWORKSPACE& pWorkspace) {
 
     g_pLayoutManager->getCurrentLayout()->recalculateMonitor(ID);
 
-    if (!(g_pCompositor->m_pLastWindow && g_pCompositor->m_pLastWindow->m_bPinned && g_pCompositor->m_pLastWindow->m_iMonitorID == ID)) {
+    if (!(g_pCompositor->m_pLastWindow.lock() && g_pCompositor->m_pLastWindow.lock()->m_bPinned && g_pCompositor->m_pLastWindow.lock()->m_iMonitorID == ID)) {
         if (const auto PLAST = pWorkspace->getLastFocusedWindow(); PLAST)
             g_pCompositor->focusWindow(PLAST);
         else

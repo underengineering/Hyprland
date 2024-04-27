@@ -11,7 +11,7 @@
       type = "github";
       owner = "hyprwm";
       repo = "wlroots-hyprland";
-      rev = "62eeffbe233d199f520a5755c344e85f8eab7940";
+      rev = "5c1d51c5a2793480f5b6c4341ad0797052aec2ea";
       flake = false;
     };
 
@@ -30,6 +30,12 @@
 
     hyprlang = {
       url = "github:hyprwm/hyprlang";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.systems.follows = "systems";
+    };
+
+    hyprwayland-scanner = {
+      url = "github:hyprwm/hyprwayland-scanner";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.systems.follows = "systems";
     };

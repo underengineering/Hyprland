@@ -65,13 +65,11 @@ ExternalProject_Add(
     INSTALL_COMMAND echo "wlroots-hyprland: install not needed"
 )
 
-find_program(WaylandScanner NAMES wayland-scanner)
+find_package(PkgConfig REQUIRED)
+
+pkg_get_variable(WaylandScanner wayland-scanner wayland_scanner)
 message(STATUS "Found WaylandScanner at ${WaylandScanner}")
-execute_process(
-    COMMAND pkgconf --variable=pkgdatadir wayland-protocols
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    OUTPUT_VARIABLE WAYLAND_PROTOCOLS_DIR
-    OUTPUT_STRIP_TRAILING_WHITESPACE)
+pkg_get_variable(WAYLAND_PROTOCOLS_DIR wayland-protocols pkgdatadir)
 message(STATUS "Found wayland-protocols at ${WAYLAND_PROTOCOLS_DIR}")
 
 if(CMAKE_BUILD_TYPE MATCHES Debug OR CMAKE_BUILD_TYPE MATCHES DEBUG)
@@ -92,13 +90,12 @@ include_directories(
 set(CMAKE_CXX_STANDARD 23)
 add_compile_definitions(WLR_USE_UNSTABLE)
 add_compile_options(-Wall -Wextra -Wno-unused-parameter -Wno-unused-value -Wno-missing-field-initializers -Wno-narrowing -Wno-pointer-arith)
-add_link_options(-rdynamic)
-set(CMAKE_ENABLE_EXPORTS TRUE)
+
+set(CMAKE_EXECUTABLE_ENABLE_EXPORTS TRUE)
 
 message(STATUS "Checking deps...")
 
 find_package(Threads REQUIRED)
-find_package(PkgConfig REQUIRED)
 
 if(LEGACY_RENDERER)
     set(GLES_VERSION "GLES2")
@@ -108,11 +105,11 @@ endif()
 find_package(OpenGL REQUIRED COMPONENTS ${GLES_VERSION})
 
 pkg_check_modules(deps REQUIRED IMPORTED_TARGET
-    xkbcommon
+    xkbcommon uuid
     wayland-server wayland-client wayland-cursor wayland-protocols
     cairo pango pangocairo pixman-1
     libdrm libinput hwdata libseat libdisplay-info libliftoff libudev gbm
-    hyprlang>=0.3.2 hyprcursor
+    hyprwayland-scanner>=0.3.2 hyprlang>=0.3.2 hyprcursor>=0.1.7
 )
 
 file(GLOB_RECURSE SRCFILES CONFIGURE_DEPENDS "src/*.cpp")
@@ -167,6 +164,12 @@ if(HAVE_LIBEXECINFO)
     target_link_libraries(Hyprland execinfo)
 endif()
 
+check_include_file("sys/timerfd.h" HAS_TIMERFD)
+pkg_check_modules(epoll IMPORTED_TARGET epoll-shim)
+if(NOT HAS_TIMERFD AND epoll_FOUND)
+    target_link_libraries(Hyprland PkgConfig::epoll)
+endif()
+
 if(LEGACY_RENDERER)
     message(STATUS "Using the legacy GLES2 renderer!")
     add_compile_definitions(LEGACY_RENDERER)
@@ -177,27 +180,19 @@ if(NO_XWAYLAND)
     add_compile_definitions(NO_XWAYLAND)
 else()
     message(STATUS "XWAYLAND Enabled (NO_XWAYLAND not defined) checking deps...")
-    pkg_check_modules(xdeps REQUIRED IMPORTED_TARGET xcb xwayland xcb-util xcb-render xcb-image xcb-xfixes xcb-errors xcb-icccm xcb-composite xcb-res xcb-ewmh)
+    pkg_check_modules(xdeps REQUIRED IMPORTED_TARGET xcb xwayland xcb-util xcb-render xcb-xfixes xcb-icccm xcb-composite xcb-res xcb-ewmh)
+    pkg_check_modules(xcb_errors IMPORTED_TARGET xcb-errors)
     target_link_libraries(Hyprland PkgConfig::xdeps)
+    if(xcb_errors_FOUND)
+        target_link_libraries(Hyprland PkgConfig::xcb_errors)
+    endif()
 endif()
 
 if(NO_SYSTEMD)
     message(STATUS "SYSTEMD support is disabled...")
 else()
-    message(STATUS "SYSTEMD support is requested (NO_SYSTEMD not defined) checking deps...")
-    check_include_file("systemd/sd-daemon.h" SYSTEMDH)
-    if(SYSTEMDH)
-        pkg_check_modules(LIBSYSTEMD libsystemd)
-        if (LIBSYSTEMD_FOUND)
-            add_compile_definitions(USES_SYSTEMD)
-            target_link_libraries(Hyprland "${LIBSYSTEMD_LIBRARIES}")
-            message(STATUS "Systemd found")
-        else()
-            message(WARNING "Systemd support requested but systemd libraries were not found")
-        endif()
-    else()
-        message(WARNING "Systemd support requested but systemd headers were not found")
-    endif()
+    message(STATUS "SYSTEMD support is requested (NO_SYSTEMD not defined)...")
+    add_compile_definitions(USES_SYSTEMD)
 endif()
 
 set(CPACK_PROJECT_NAME ${PROJECT_NAME})
@@ -231,6 +226,19 @@ function(protocol protoPath protoName external)
         target_sources(Hyprland PRIVATE protocols/${protoName}-protocol.c)
     endif()
 endfunction()
+function(protocolNew protoPath protoName external)
+    if (external)
+        execute_process(
+            COMMAND hyprwayland-scanner ${protoPath} ${CMAKE_SOURCE_DIR}/protocols/
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+        target_sources(Hyprland PRIVATE protocols/${protoName}.cpp)
+    else()
+        execute_process(
+            COMMAND hyprwayland-scanner ${WAYLAND_PROTOCOLS_DIR}/${protoPath} ${CMAKE_SOURCE_DIR}/protocols/
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+        target_sources(Hyprland PRIVATE protocols/${protoName}.cpp)
+    endif()
+endfunction()
 
 target_link_libraries(Hyprland
         ${CMAKE_SOURCE_DIR}/subprojects/wlroots-hyprland/build/libwlroots.a
@@ -238,12 +246,11 @@ target_link_libraries(Hyprland
         OpenGL::GL
         Threads::Threads
         libudis86
+        uuid
 )
 
 protocol("protocols/idle.xml" "idle" true)
-protocol("protocols/pointer-constraints-unstable-v1.xml" "pointer-constraints-unstable-v1" true)
 protocol("protocols/tablet-unstable-v2.xml" "tablet-unstable-v2" true)
-protocol("protocols/wlr-foreign-toplevel-management-unstable-v1.xml" "wlr-foreign-toplevel-management-unstable-v1" true)
 protocol("protocols/wlr-layer-shell-unstable-v1.xml" "wlr-layer-shell-unstable-v1" true)
 protocol("protocols/wlr-output-power-management-unstable-v1.xml" "wlr-output-power-management-unstable-v1" true)
 protocol("protocols/wlr-screencopy-unstable-v1.xml" "wlr-screencopy-unstable-v1" true)
@@ -251,11 +258,23 @@ protocol("subprojects/hyprland-protocols/protocols/hyprland-global-shortcuts-v1.
 protocol("subprojects/hyprland-protocols/protocols/hyprland-toplevel-export-v1.xml" "hyprland-toplevel-export-v1" true)
 protocol("stable/xdg-shell/xdg-shell.xml" "xdg-shell" false)
 protocol("unstable/linux-dmabuf/linux-dmabuf-unstable-v1.xml" "linux-dmabuf-unstable-v1" false)
-protocol("unstable/xdg-output/xdg-output-unstable-v1.xml" "xdg-output-unstable-v1" false)
-protocol("staging/fractional-scale/fractional-scale-v1.xml" "fractional-scale-v1" false)
-protocol("staging/tearing-control/tearing-control-v1.xml" "tearing-control-v1" false)
 protocol("unstable/text-input/text-input-unstable-v1.xml" "text-input-unstable-v1" false)
-protocol("staging/cursor-shape/cursor-shape-v1.xml" "cursor-shape-v1" false)
+
+protocolNew("protocols/wlr-gamma-control-unstable-v1.xml" "wlr-gamma-control-unstable-v1" true)
+protocolNew("protocols/wlr-foreign-toplevel-management-unstable-v1.xml" "wlr-foreign-toplevel-management-unstable-v1" true)
+protocolNew("staging/tearing-control/tearing-control-v1.xml" "tearing-control-v1" false)
+protocolNew("staging/fractional-scale/fractional-scale-v1.xml" "fractional-scale-v1" false)
+protocolNew("unstable/xdg-output/xdg-output-unstable-v1.xml" "xdg-output-unstable-v1" false)
+protocolNew("staging/cursor-shape/cursor-shape-v1.xml" "cursor-shape-v1" false)
+protocolNew("unstable/idle-inhibit/idle-inhibit-unstable-v1.xml" "idle-inhibit-unstable-v1" false)
+protocolNew("unstable/relative-pointer/relative-pointer-unstable-v1.xml" "relative-pointer-unstable-v1" false)
+protocolNew("unstable/xdg-decoration/xdg-decoration-unstable-v1.xml" "xdg-decoration-unstable-v1" false)
+protocolNew("staging/alpha-modifier/alpha-modifier-v1.xml" "alpha-modifier-v1" false)
+protocolNew("staging/ext-foreign-toplevel-list/ext-foreign-toplevel-list-v1.xml" "ext-foreign-toplevel-list-v1" false)
+protocolNew("unstable/pointer-gestures/pointer-gestures-unstable-v1.xml" "pointer-gestures-unstable-v1" false)
+protocolNew("unstable/keyboard-shortcuts-inhibit/keyboard-shortcuts-inhibit-unstable-v1.xml" "keyboard-shortcuts-inhibit-unstable-v1" false)
+protocolNew("unstable/text-input/text-input-unstable-v3.xml" "text-input-unstable-v3" false)
+protocolNew("unstable/pointer-constraints/pointer-constraints-unstable-v1.xml" "pointer-constraints-unstable-v1" false)
 
 # tools
 add_subdirectory(hyprctl)

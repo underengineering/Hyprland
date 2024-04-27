@@ -12,8 +12,15 @@ static int cursorAnimTimer(void* data) {
     return 1;
 }
 
+static void hcLogger(enum eHyprcursorLogLevel level, char* message) {
+    if (level == HC_LOG_TRACE)
+        return;
+
+    Debug::log(NONE, "[hc] {}", message);
+}
+
 CCursorManager::CCursorManager() {
-    m_pHyprcursor = std::make_unique<Hyprcursor::CHyprcursorManager>(m_szTheme.empty() ? nullptr : m_szTheme.c_str());
+    m_pHyprcursor = std::make_unique<Hyprcursor::CHyprcursorManager>(m_szTheme.empty() ? nullptr : m_szTheme.c_str(), hcLogger);
 
     if (!m_pHyprcursor->valid())
         Debug::log(ERR, "Hyprcursor failed loading theme \"{}\", falling back to X.", m_szTheme);
@@ -43,7 +50,7 @@ CCursorManager::CCursorManager() {
 
     updateTheme();
 
-    g_pHookSystem->hookDynamic("monitorLayoutChanged", [this](void* self, SCallbackInfo& info, std::any param) { this->updateTheme(); });
+    static auto P = g_pHookSystem->hookDynamic("monitorLayoutChanged", [this](void* self, SCallbackInfo& info, std::any param) { this->updateTheme(); });
 }
 
 void CCursorManager::dropBufferRef(CCursorManager::CCursorBuffer* ref) {
@@ -203,13 +210,15 @@ void CCursorManager::updateTheme() {
             highestScale = m->scale;
     }
 
-    if (highestScale * m_iSize == m_sCurrentStyleInfo.size)
+    highestScale = std::ceil(highestScale);
+
+    if (std::round(highestScale * m_iSize) == m_sCurrentStyleInfo.size)
         return;
 
     if (m_sCurrentStyleInfo.size && m_pHyprcursor->valid())
         m_pHyprcursor->cursorSurfaceStyleDone(m_sCurrentStyleInfo);
 
-    m_sCurrentStyleInfo.size = m_iSize * highestScale;
+    m_sCurrentStyleInfo.size = std::round(m_iSize * highestScale);
     m_fCursorScale           = highestScale;
 
     if (m_pHyprcursor->valid())
@@ -224,7 +233,7 @@ void CCursorManager::updateTheme() {
 }
 
 void CCursorManager::changeTheme(const std::string& name, const int size) {
-    m_pHyprcursor = std::make_unique<Hyprcursor::CHyprcursorManager>(name.empty() ? "" : name.c_str());
+    m_pHyprcursor = std::make_unique<Hyprcursor::CHyprcursorManager>(name.empty() ? "" : name.c_str(), hcLogger);
     m_szTheme     = name;
     m_iSize       = size;
 

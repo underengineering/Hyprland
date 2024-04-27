@@ -12,11 +12,13 @@
   hyprcursor,
   hyprland-protocols,
   hyprlang,
+  hyprwayland-scanner,
   jq,
   libGL,
   libdrm,
   libexecinfo,
   libinput,
+  libuuid,
   libxcb,
   libxkbcommon,
   mesa,
@@ -86,6 +88,7 @@ in
     '';
 
     nativeBuildInputs = [
+      hyprwayland-scanner
       jq
       makeWrapper
       meson
@@ -111,6 +114,7 @@ in
         libdrm
         libGL
         libinput
+        libuuid
         libxkbcommon
         mesa
         pango

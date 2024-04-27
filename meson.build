@@ -51,14 +51,10 @@ if not have_xwayland
 endif
 
 backtrace_dep = cpp_compiler.find_library('execinfo', required: false)
-systemd_dep = dependency('libsystemd', required: get_option('systemd'))
+epoll_dep = dependency('epoll-shim', required: false) # timerfd on BSDs
 
 if get_option('systemd').enabled()
-  if systemd_dep.found()
-    add_project_arguments('-DUSES_SYSTEMD', language: 'cpp')
-  else
-  	error('Cannot enable systemd in Hyprland: libsystemd was not found')
-  endif
+  add_project_arguments('-DUSES_SYSTEMD', language: 'cpp')
 endif
 
 if get_option('legacy_renderer').enabled()

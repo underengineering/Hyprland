@@ -2,12 +2,15 @@
 
 #include "../../defines.hpp"
 #include <list>
+#include <any>
 #include "../../helpers/WLClasses.hpp"
 #include "../../helpers/Timer.hpp"
 #include "InputMethodRelay.hpp"
+#include "../../helpers/signal/Listener.hpp"
 
-class CConstraint;
+class CPointerConstraint;
 class CWindow;
+class CIdleInhibitor;
 
 enum eClickBehaviorMode {
     CLICKMODE_DEFAULT = 0,
@@ -35,7 +38,7 @@ enum eBorderIconDirection {
 };
 
 struct STouchData {
-    CWindow*       touchFocusWindow  = nullptr;
+    PHLWINDOWREF   touchFocusWindow;
     SLayerSurface* touchFocusLS      = nullptr;
     wlr_surface*   touchFocusSurface = nullptr;
     Vector2D       touchSurfaceOrigin;
@@ -63,6 +66,7 @@ class CKeybindManager;
 
 class CInputManager {
   public:
+    CInputManager();
     ~CInputManager();
 
     void               onMouseMoved(wlr_pointer_motion_event*);
@@ -102,24 +106,20 @@ class CInputManager {
     void               setClickMode(eClickBehaviorMode);
     eClickBehaviorMode getClickMode();
     void               processMouseRequest(wlr_seat_pointer_request_set_cursor_event* e);
-    void               processMouseRequest(wlr_cursor_shape_manager_v1_request_set_shape_event* e);
 
     void               onTouchDown(wlr_touch_down_event*);
     void               onTouchUp(wlr_touch_up_event*);
     void               onTouchMove(wlr_touch_motion_event*);
 
-    void               onPointerHoldBegin(wlr_pointer_hold_begin_event*);
-    void               onPointerHoldEnd(wlr_pointer_hold_end_event*);
-
     STouchData         m_sTouchData;
 
     // for dragging floating windows
-    CWindow*       currentlyDraggedWindow = nullptr;
-    eMouseBindMode dragMode               = MBIND_INVALID;
-    bool           m_bWasDraggingWindow   = false;
+    PHLWINDOWREF   currentlyDraggedWindow;
+    eMouseBindMode dragMode             = MBIND_INVALID;
+    bool           m_bWasDraggingWindow = false;
 
     // for refocus to be forced
-    CWindow*             m_pForcedFocus = nullptr;
+    PHLWINDOWREF         m_pForcedFocus;
 
     SDrag                m_sDrag;
 
@@ -131,9 +131,6 @@ class CInputManager {
     std::list<STabletTool> m_lTabletTools;
     std::list<STabletPad>  m_lTabletPads;
 
-    // idle inhibitors
-    std::list<SIdleInhibitor> m_lIdleInhibitors;
-
     // Touch devices
     std::list<STouchDevice> m_lTouchDevices;
 
@@ -144,27 +141,28 @@ class CInputManager {
     std::deque<SLayerSurface*> m_dExclusiveLSes;
 
     // constraints
-    std::vector<CConstraint*> m_vConstraints;
+    std::vector<std::weak_ptr<CPointerConstraint>> m_vConstraints;
 
-    void                      newTabletTool(wlr_input_device*);
-    void                      newTabletPad(wlr_input_device*);
-    void                      focusTablet(STablet*, wlr_tablet_tool*, bool motion = false);
-    void                      newIdleInhibitor(wlr_idle_inhibitor_v1*);
-    void                      recheckIdleInhibitorStatus();
+    //
+    void              newTabletTool(wlr_input_device*);
+    void              newTabletPad(wlr_input_device*);
+    void              focusTablet(STablet*, wlr_tablet_tool*, bool motion = false);
+    void              newIdleInhibitor(std::any);
+    void              recheckIdleInhibitorStatus();
 
-    void                      onSwipeBegin(wlr_pointer_swipe_begin_event*);
-    void                      onSwipeEnd(wlr_pointer_swipe_end_event*);
-    void                      onSwipeUpdate(wlr_pointer_swipe_update_event*);
+    void              onSwipeBegin(wlr_pointer_swipe_begin_event*);
+    void              onSwipeEnd(wlr_pointer_swipe_end_event*);
+    void              onSwipeUpdate(wlr_pointer_swipe_update_event*);
 
-    SSwipeGesture             m_sActiveSwipe;
+    SSwipeGesture     m_sActiveSwipe;
 
-    SKeyboard*                m_pActiveKeyboard = nullptr;
+    SKeyboard*        m_pActiveKeyboard = nullptr;
 
-    CTimer                    m_tmrLastCursorMovement;
+    CTimer            m_tmrLastCursorMovement;
 
-    CInputMethodRelay         m_sIMERelay;
+    CInputMethodRelay m_sIMERelay;
 
-    void                      updateKeyboardsLeds(wlr_input_device* pKeyboard);
+    void              updateKeyboardsLeds(wlr_input_device* pKeyboard);
 
     // for shared mods
     uint32_t accumulateModsFromAllKBs();
@@ -190,13 +188,19 @@ class CInputManager {
     bool m_bLastInputTouch = false;
 
     // for tracking mouse refocus
-    CWindow*     m_pLastMouseFocus   = nullptr;
+    PHLWINDOWREF m_pLastMouseFocus;
     wlr_surface* m_pLastMouseSurface = nullptr;
 
     //
     bool m_bEmptyFocusCursorSet = false;
 
   private:
+    // Listeners
+    struct {
+        CHyprSignalListener setCursorShape;
+        CHyprSignalListener newIdleInhibitor;
+    } m_sListeners;
+
     bool                 m_bCursorImageOverridden = false;
     eBorderIconDirection m_eBorderIconDirection   = BORDERICON_NONE;
 
@@ -222,7 +226,7 @@ class CInputManager {
     // this will be set after a refocus()
     wlr_surface*   m_pFoundSurfaceToFocus = nullptr;
     SLayerSurface* m_pFoundLSToFocus      = nullptr;
-    CWindow*       m_pFoundWindowToFocus  = nullptr;
+    PHLWINDOWREF   m_pFoundWindowToFocus;
 
     // for holding focus on buttons held
     bool m_bFocusHeldByButtons   = false;
@@ -231,13 +235,21 @@ class CInputManager {
     // for releasing mouse buttons
     std::list<uint32_t> m_lCurrentlyHeldButtons;
 
+    // idle inhibitors
+    struct SIdleInhibitor {
+        std::shared_ptr<CIdleInhibitor> inhibitor;
+        PHLWINDOWREF                    pWindow;
+        CHyprSignalListener             windowDestroyListener;
+    };
+    std::vector<std::unique_ptr<SIdleInhibitor>> m_vIdleInhibitors;
+
     // swipe
     void beginWorkspaceSwipe();
     void updateWorkspaceSwipe(double);
     void endWorkspaceSwipe();
 
     void setBorderCursorIcon(eBorderIconDirection);
-    void setCursorIconOnBorder(CWindow* w);
+    void setCursorIconOnBorder(PHLWINDOW w);
 
     // temporary. Obeys setUntilUnset.
     void setCursorImageOverride(const std::string& name);
